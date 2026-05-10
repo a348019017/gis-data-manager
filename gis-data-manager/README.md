@@ -39,11 +39,6 @@
 - 一键连接测试、内置 GIS 助手聊天接口
 - 多轮对话与历史记录
 
-### 系统托盘
-
-- 关闭窗口最小化到托盘
-- 托盘菜单支持显示窗口 / 退出
-
 ## 技术栈
 
 | 层 | 技术 |
@@ -104,35 +99,6 @@ npm run tauri:build
 ```
 
 产物位于 `src-tauri/target/release/bundle/`。
-
-## Tauri 命令
-
-| 命令 | 说明 |
-| --- | --- |
-| `get_data_sources` / `add_data_source` / `update_data_source` / `delete_data_source` | 数据源 CRUD |
-| `test_connection` | 测试数据库 / OSS 连接 |
-| `get_services` / `add_service` / `update_service` / `delete_service` | GIS 服务 CRUD |
-| `test_service_connection` | 测试 GIS 服务连接 |
-| `import_file` | 导入文件到数据源（OSS 上传） |
-| `download_file` | 从 OSS 下载文件 |
-| `get_import_records` / `delete_import_record` | 导入记录管理 |
-| `get_settings` / `save_settings` | AI 模型配置 |
-| `test_model_connection` | 测试 AI 模型连接 |
-| `chat_message` | 发送 AI 聊天请求 |
-| `get_gis_tools` / `add_gis_tool` / `update_gis_tool` / `delete_gis_tool` | GIS 工具 CRUD |
-| `execute_gis_tool` | 执行工具（模拟） |
-| `get_app_info` | 获取应用信息 |
-
-## 本地测试环境
-
-MinIO（S3 兼容对象存储）：
-
-```bash
-docker run -d -p 9104:9000 -p 9105:9001 \
-  -e "MINIO_ROOT_USER=OuR9xtys9pYwLNGAxY63" \
-  -e "MINIO_ROOT_PASSWORD=IzJsO74Puwhl9tusijhX7kF7QAObZs5zewo2RVkA" \
-  minio/minio server /data --console-address ":9001"
-```
 
 ## 界面预览
 
