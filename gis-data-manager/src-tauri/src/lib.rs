@@ -1,3 +1,6 @@
+mod db_init;
+mod shapefile_import;
+
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -5,6 +8,17 @@ use tauri::Emitter;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::Manager;
 use tokio::sync::Mutex;
+
+pub use db_init::init_db;
+pub use shapefile_import::{ShapefileInfo, DbfField};
+
+// ==================== 分页响应 ====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedResponse<T> {
+    pub total: i64,
+    pub items: Vec<T>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataSource {
@@ -155,207 +169,6 @@ pub struct AppState {
     pub db: Mutex<Connection>,
 }
 
-fn init_db(db_path: &str) -> Result<Connection, String> {
-    if let Some(parent) = std::path::Path::new(db_path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
-    }
-    let conn = Connection::open(db_path).map_err(|e| format!("打开数据库失败: {}", e))?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS data_sources (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            ds_type TEXT NOT NULL,
-            subtype TEXT NOT NULL,
-            host TEXT NOT NULL,
-            port INTEGER NOT NULL DEFAULT 5432,
-            database TEXT NOT NULL,
-            username TEXT NOT NULL,
-            password TEXT NOT NULL DEFAULT '',
-            remark TEXT NOT NULL DEFAULT '',
-            connected INTEGER NOT NULL DEFAULT 0
-        )",
-        [],
-    )
-    .map_err(|e| format!("创建表失败: {}", e))?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )",
-        [],
-    )
-    .map_err(|e| format!("创建设置表失败: {}", e))?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS services (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            service_type TEXT NOT NULL,
-            endpoint TEXT NOT NULL,
-            username TEXT NOT NULL DEFAULT '',
-            password TEXT NOT NULL DEFAULT '',
-            connected INTEGER NOT NULL DEFAULT 0,
-            remark TEXT NOT NULL DEFAULT ''
-        )",
-        [],
-    )
-    .map_err(|e| format!("创建服务表失败: {}", e))?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS import_records (
-            id TEXT PRIMARY KEY,
-            file_name TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_size INTEGER NOT NULL,
-            file_type TEXT NOT NULL,
-            format TEXT NOT NULL,
-            target_source_id TEXT NOT NULL,
-            target_source_name TEXT NOT NULL,
-            target_type TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL,
-            error_msg TEXT NOT NULL DEFAULT ''
-        )",
-        [],
-    )
-    .map_err(|e| format!("创建导入记录表失败: {}", e))?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS gis_tools (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            category TEXT NOT NULL,
-            tags TEXT NOT NULL DEFAULT 'both',
-            params TEXT NOT NULL DEFAULT '[]',
-            returns TEXT NOT NULL DEFAULT '',
-            example TEXT NOT NULL DEFAULT ''
-        )",
-        [],
-    )
-    .map_err(|e| format!("创建工具表失败: {}", e))?;
-
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS dict_items (
-            id TEXT PRIMARY KEY,
-            category TEXT NOT NULL,
-            label TEXT NOT NULL,
-            value TEXT NOT NULL,
-            sort_order INTEGER NOT NULL DEFAULT 0
-        )",
-        [],
-    )
-    .map_err(|e| format!("创建字典表失败: {}", e))?;
-
-    // 预置标签字典
-    conn.execute(
-        "INSERT OR IGNORE INTO dict_items (id, category, label, value, sort_order) VALUES
-            ('dict_dt_vector', 'data_type', '矢量数据', 'vector', 1),
-            ('dict_dt_raster', 'data_type', '栅格数据', 'raster', 2),
-            ('dict_dt_document', 'data_type', '文档资料', 'document', 3),
-            ('dict_ds_field', 'data_source', '外业采集', 'field', 1),
-            ('dict_ds_office', 'data_source', '内业制作', 'office', 2),
-            ('dict_ds_third', 'data_source', '第三方提供', 'third_party', 3),
-            ('dict_ds_history', 'data_source', '历史数据', 'historical', 4),
-            ('dict_imp_high', 'importance', '重要', 'high', 1),
-            ('dict_imp_normal', 'importance', '一般', 'normal', 2),
-            ('dict_imp_ref', 'importance', '参考', 'reference', 3)
-        ",
-        [],
-    )
-    .map_err(|e| format!("预置字典失败: {}", e))?;
-
-    // 为 import_records 表添加 tags 字段（兼容旧数据库）
-    conn.execute("ALTER TABLE import_records ADD COLUMN tags TEXT NOT NULL DEFAULT ''", [])
-        .ok(); // 忽略字段已存在的错误
-
-    // 预置 GIS 工具
-    conn.execute(
-        "INSERT OR IGNORE INTO gis_tools (id, name, description, category, tags, params, returns, example) VALUES
-            ('tool_buffer', '缓冲区分析', '为矢量要素创建指定距离的缓冲区', 'spatial_analysis', 'both',
-             '[{\"name\":\"distance\",\"type\":\"number\",\"required\":true,\"default\":100,\"description\":\"缓冲区距离(米)\"}]',
-             '生成的缓冲矢量图层', '创建河流100米缓冲带'),
-            ('tool_clip', '裁剪分析', '使用裁剪边界截取输入矢量数据', 'spatial_analysis', 'both',
-             '[{\"name\":\"clip_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"裁剪图层ID\"}]',
-             '裁剪后的矢量图层', '用行政区边界裁剪土地利用数据'),
-            ('tool_intersect', '相交分析', '计算两个图层的几何交集', 'spatial_analysis', 'ai',
-             '[{\"name\":\"layer_a\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"输入图层A\"},{\"name\":\"layer_b\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"输入图层B\"}]',
-             '相交部分的矢量数据', '找出两个地块的公共区域'),
-            ('tool_union', '并集分析', '合并两个图层的几何数据', 'spatial_analysis', 'ai',
-             '[{\"name\":\"layer_a\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"输入图层A\"},{\"name\":\"layer_b\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"输入图层B\"}]',
-             '合并后的矢量数据', '合并相邻的两个地块'),
-            ('tool_conv2shp', '转Shapefile', '将矢量数据转换为Shapefile格式', 'data_conversion', 'both',
-             '[{\"name\":\"source_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源图层ID\"},{\"name\":\"encoding\",\"type\":\"string\",\"required\":false,\"default\":\"UTF-8\",\"description\":\"字符编码\"}]',
-             'Shapefile文件路径', '导出GeoJSON为Shapefile'),
-            ('tool_conv2geojson', '转GeoJSON', '将矢量数据转换为GeoJSON格式', 'data_conversion', 'both',
-             '[{\"name\":\"source_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源图层ID\"}]',
-             'GeoJSON文本内容', '将数据库矢量数据转为GeoJSON'),
-            ('tool_conv2gpkg', '转GeoPackage', '将矢量数据转换为GeoPackage格式', 'data_conversion', 'both',
-             '[{\"name\":\"source_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源图层ID\"}]',
-             'GeoPackage文件路径', '导出Shapefile为GeoPackage'),
-            ('tool_proj_transform', '坐标转换', '将矢量数据从一个坐标系转换到另一个坐标系', 'coordinate', 'both',
-             '[{\"name\":\"source_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源图层ID\"},{\"name\":\"target_crs\",\"type\":\"string\",\"required\":true,\"default\":\"EPSG:4326\",\"description\":\"目标坐标系EPSG代码\"}]',
-             '转换后的矢量图层', '将WGS84数据转为CGCS2000'),
-            ('tool_reproject', '投影定义', '查看或修改图层的投影信息', 'coordinate', 'human',
-             '[{\"name\":\"source_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源图层ID\"},{\"name\":\"target_crs\",\"type\":\"string\",\"required\":true,\"default\":\"EPSG:3857\",\"description\":\"目标投影坐标系\"}]',
-             '投影后的图层', '将WGS84转为Web Mercator投影'),
-            ('tool_stats', '数据统计', '计算矢量图层的面积、周长、边界框等统计信息', 'data_management', 'both',
-             '[{\"name\":\"source_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源图层ID\"}]',
-             '统计结果JSON', '获取地块图层的面积统计'),
-            ('tool_query', '属性查询', '按属性条件筛选矢量要素', 'data_management', 'both',
-             '[{\"name\":\"source_layer\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源图层ID\"},{\"name\":\"filter\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"SQL过滤条件\"}]',
-             '筛选后的要素列表', '查询人口>100万的城市'),
-            ('tool_merge', '图层合并', '合并多个同类型矢量图层', 'data_management', 'ai',
-             '[{\"name\":\"source_layers\",\"type\":\"array\",\"required\":true,\"default\":[],\"description\":\"源图层ID列表\"}]',
-             '合并后的图层', '合并三个年份的土地利用数据'),
-            ('tool_gdal_warp', 'GDAL 栅格重投影', '使用GDAL对栅格数据进行重投影和几何校正', 'raster_processing', 'both',
-             '[{\"name\":\"source_raster\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源栅格路径\"},{\"name\":\"target_crs\",\"type\":\"string\",\"required\":true,\"default\":\"EPSG:4326\",\"description\":\"目标坐标系\"},{\"name\":\"resample\",\"type\":\"string\",\"required\":false,\"default\":\"bilinear\",\"description\":\"重采样方法\"}]',
-             '重投影后的栅格文件', '将遥感影像重投影到CGCS2000'),
-            ('tool_gdal_translate', 'GDAL 栅格转换', '使用GDAL进行栅格格式转换、裁剪和重采样', 'raster_processing', 'both',
-             '[{\"name\":\"source_raster\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源栅格路径\"},{\"name\":\"target_format\",\"type\":\"string\",\"required\":true,\"default\":\"GTiff\",\"description\":\"输出格式\"},{\"name\":\"window\",\"type\":\"string\",\"required\":false,\"default\":\"\",\"description\":\"裁剪窗口x1,y1,x2,y2\"}]',
-             '转换后的栅格文件', '将TIFF转为GeoTIFF并裁剪'),
-            ('tool_gdal_info', 'GDAL 栅格信息', '获取栅格文件的元数据、投影和统计信息', 'raster_processing', 'human',
-             '[{\"name\":\"source_raster\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源栅格路径\"}]',
-             '栅格元数据JSON', '查看遥感影像的波段和投影信息'),
-            ('tool_gdal_calc', 'GDAL 栅格计算', '使用GDAL对多波段栅格进行数学运算', 'raster_processing', 'ai',
-             '[{\"name\":\"source_raster\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源栅格路径\"},{\"name\":\"expression\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"计算表达式如(A-B)/(A+B)\"}]',
-             '计算结果栅格', '计算NDVI=(NIR-Red)/(NIR+Red)'),
-            ('tool_gdal_polygonize', 'GDAL 栅格转矢量', '将栅格数据的像元值转换为多边形矢量', 'raster_processing', 'both',
-             '[{\"name\":\"source_raster\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"源栅格路径\"},{\"name\":\"field_name\",\"type\":\"string\",\"required\":false,\"default\":\"DN\",\"description\":\"属性字段名\"}]',
-             '多边形矢量图层', '将土地利用栅格转为矢量多边形'),
-            ('tool_ogr_info', 'OGR 数据源信息', '获取矢量数据源的结构、图层数量和字段信息', 'data_management', 'human',
-             '[{\"name\":\"source_path\",\"type\":\"string\",\"required\":true,\"default\":\"\",\"description\":\"数据源路径或连接串\"}]',
-             '数据源元数据JSON', '查看Shapefile的字段和坐标系')
-        ",
-        [],
-    )
-    .map_err(|e| format!("预置工具失败: {}", e))?;
-
-    // 预置公开 GIS 数据源
-    conn.execute(
-        "INSERT OR IGNORE INTO data_sources (id, name, ds_type, subtype, host, port, database, username, password, remark, connected) VALUES
-            ('preset_gis_oss', '云存储 OSS', 'oss', 'aliyun', 'oss-cn-hangzhou.aliyuncs.com', 443, 'gis-data', '', '', '对象存储（公开只读）', 1),
-            ('preset_local_minio', '本地 MinIO', 'oss', 'minio', '127.0.0.1', 9104, 'gis-data', 'OuR9xtys9pYwLNGAxY63', 'IzJsO74Puwhl9tusijhX7kF7QAObZs5zewo2RVkA', '本地开发 MinIO 实例', 0)
-        ",
-        [],
-    )
-    .map_err(|e| format!("预置数据源失败: {}", e))?;
-
-    // 预置公开 GIS 服务
-    conn.execute(
-        "INSERT OR IGNORE INTO services (id, name, service_type, endpoint, username, password, connected, remark) VALUES
-            ('svc_tiandutu_wmts', '天地图 WMTS', 'wmts', 'http://t0.tianditu.gov.cn/img_w/wmts', '', '', 1, '天地图影像 WMTS 服务'),
-            ('svc_geoserver_demo', 'GeoServer 示例', 'geoserver', 'https://demo.geo-solutions.it/geoserver', '', '', 0, 'GeoServer 公开演示服务'),
-            ('svc_osm_wms', 'OSM WMS', 'wms', 'https://ows.mundialis.de/services/service', '', '', 1, 'Mundialis OSM WMS 服务')
-        ",
-        [],
-    )
-    .map_err(|e| format!("预置服务失败: {}", e))?;
-
-    Ok(conn)
-}
-
 fn load_sources_from_db(conn: &Connection) -> Vec<DataSource> {
     let mut stmt = conn
         .prepare("SELECT id, name, ds_type, subtype, host, port, database, username, password, remark, connected FROM data_sources")
@@ -463,9 +276,77 @@ fn delete_source(conn: &Connection, id: &str) -> Result<bool, String> {
 // ==================== 数据源命令 ====================
 
 #[tauri::command]
-async fn get_data_sources(state: tauri::State<'_, Arc<AppState>>) -> Result<Vec<DataSource>, String> {
-    let sources = state.sources.lock().await;
-    Ok(sources.clone())
+async fn get_data_sources(
+    keyword: Option<String>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<PaginatedResponse<DataSource>, String> {
+    let db = state.db.lock().await;
+
+    let kw = keyword.unwrap_or_default();
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(50);
+
+    // 查询总数
+    let total: i64 = if !kw.is_empty() {
+        let like = format!("%{}%", kw);
+        db.query_row(
+            "SELECT COUNT(*) FROM data_sources WHERE name LIKE ?1 OR host LIKE ?2 OR remark LIKE ?3",
+            params![like, like, like],
+            |row| row.get(0),
+        ).map_err(|e| format!("查询总数失败: {}", e))?
+    } else {
+        db.query_row("SELECT COUNT(*) FROM data_sources", [], |row| row.get(0))
+            .map_err(|e| format!("查询总数失败: {}", e))?
+    };
+
+    // 查询分页数据
+    let (sql, params_arr): (String, Vec<Box<dyn rusqlite::ToSql>>) = if !kw.is_empty() {
+        let like = format!("%{}%", kw);
+        (
+            "SELECT id, name, ds_type, subtype, host, port, database, username, password, remark, connected
+             FROM data_sources
+             WHERE name LIKE ?1 OR host LIKE ?2 OR remark LIKE ?3
+             ORDER BY id LIMIT ?4 OFFSET ?5".to_string(),
+            vec![
+                Box::new(like.clone()),
+                Box::new(like.clone()),
+                Box::new(like),
+                Box::new(limit),
+                Box::new(offset),
+            ],
+        )
+    } else {
+        (
+            "SELECT id, name, ds_type, subtype, host, port, database, username, password, remark, connected
+             FROM data_sources ORDER BY id LIMIT ?1 OFFSET ?2".to_string(),
+            vec![Box::new(limit), Box::new(offset)],
+        )
+    };
+
+    let mut stmt = db.prepare(&sql).map_err(|e| format!("查询失败: {}", e))?;
+    let items: Vec<DataSource> = stmt
+        .query_map(rusqlite::params_from_iter(params_arr.iter().map(|p| p.as_ref())), |row| {
+            Ok(DataSource {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                ds_type: row.get(2)?,
+                subtype: row.get(3)?,
+                host: row.get(4)?,
+                port: row.get(5)?,
+                database: row.get(6)?,
+                username: row.get(7)?,
+                password: row.get(8).unwrap_or_default(),
+                remark: row.get(9).unwrap_or_default(),
+                connected: row.get::<_, i32>(10)? != 0,
+            })
+        })
+        .map_err(|e| format!("查询失败: {}", e))?
+        .map(|r| r.expect("row"))
+        .collect();
+
+    Ok(PaginatedResponse { total, items })
 }
 
 #[tauri::command]
@@ -726,6 +607,9 @@ fn extract_xml_message(xml: &str) -> String {
 async fn test_database_connection(source: &DataSource) -> Result<bool, String> {
     match source.subtype.as_str() {
         "postgresql" => {
+            if source.username.is_empty() {
+                return Err("PostgreSQL 需要提供用户名".into());
+            }
             let url = format!(
                 "postgresql://{}:{}@{}:{}/{}",
                 urlencoding_encode(&source.username),
@@ -734,12 +618,18 @@ async fn test_database_connection(source: &DataSource) -> Result<bool, String> {
                 source.port,
                 urlencoding_encode(&source.database),
             );
-            sqlx::PgPool::connect(&url)
+            let pool_options = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(std::time::Duration::from_secs(10));
+            pool_options.connect(&url)
                 .await
                 .map(|_| true)
                 .map_err(|e| format!("PostgreSQL 连接失败: {}", e))
         }
         "mysql" => {
+            if source.username.is_empty() {
+                return Err("MySQL 需要提供用户名".into());
+            }
             let url = format!(
                 "mysql://{}:{}@{}:{}/{}",
                 urlencoding_encode(&source.username),
@@ -748,12 +638,18 @@ async fn test_database_connection(source: &DataSource) -> Result<bool, String> {
                 source.port,
                 urlencoding_encode(&source.database),
             );
-            sqlx::MySqlPool::connect(&url)
+            let pool_options = sqlx::mysql::MySqlPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(std::time::Duration::from_secs(10));
+            pool_options.connect(&url)
                 .await
                 .map(|_| true)
                 .map_err(|e| format!("MySQL 连接失败: {}", e))
         }
         "spatialite" => {
+            if source.database.is_empty() {
+                return Err("SpatiaLite 需要提供数据库文件路径".into());
+            }
             rusqlite::Connection::open(&source.database)
                 .map(|_| true)
                 .map_err(|e| format!("SpatiaLite 连接失败: {}", e))
@@ -1009,9 +905,72 @@ async fn chat_message(
 // ==================== 服务注册命令 ====================
 
 #[tauri::command]
-async fn get_services(state: tauri::State<'_, Arc<AppState>>) -> Result<Vec<Service>, String> {
-    let services = state.services.lock().await;
-    Ok(services.clone())
+async fn get_services(
+    keyword: Option<String>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<PaginatedResponse<Service>, String> {
+    let db = state.db.lock().await;
+
+    let kw = keyword.unwrap_or_default();
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(50);
+
+    // 查询总数
+    let total: i64 = if !kw.is_empty() {
+        let like = format!("%{}%", kw);
+        db.query_row(
+            "SELECT COUNT(*) FROM services WHERE name LIKE ?1 OR endpoint LIKE ?2",
+            params![like, like],
+            |row| row.get(0),
+        ).map_err(|e| format!("查询总数失败: {}", e))?
+    } else {
+        db.query_row("SELECT COUNT(*) FROM services", [], |row| row.get(0))
+            .map_err(|e| format!("查询总数失败: {}", e))?
+    };
+
+    let (sql, params_arr): (String, Vec<Box<dyn rusqlite::ToSql>>) = if !kw.is_empty() {
+        let like = format!("%{}%", kw);
+        (
+            "SELECT id, name, service_type, endpoint, username, password, connected, remark
+             FROM services
+             WHERE name LIKE ?1 OR endpoint LIKE ?2
+             ORDER BY id LIMIT ?3 OFFSET ?4".to_string(),
+            vec![
+                Box::new(like.clone()),
+                Box::new(like),
+                Box::new(limit),
+                Box::new(offset),
+            ],
+        )
+    } else {
+        (
+            "SELECT id, name, service_type, endpoint, username, password, connected, remark
+             FROM services ORDER BY id LIMIT ?1 OFFSET ?2".to_string(),
+            vec![Box::new(limit), Box::new(offset)],
+        )
+    };
+
+    let mut stmt = db.prepare(&sql).map_err(|e| format!("查询失败: {}", e))?;
+    let items: Vec<Service> = stmt
+        .query_map(rusqlite::params_from_iter(params_arr.iter().map(|p| p.as_ref())), |row| {
+            Ok(Service {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                service_type: row.get(2)?,
+                endpoint: row.get(3)?,
+                username: row.get(4).unwrap_or_default(),
+                password: row.get(5).unwrap_or_default(),
+                connected: row.get::<_, i32>(6)? != 0,
+                remark: row.get(7).unwrap_or_default(),
+            })
+        })
+        .map_err(|e| format!("查询失败: {}", e))?
+        .map(|r| r.expect("row"))
+        .collect();
+
+    Ok(PaginatedResponse { total, items })
 }
 
 #[tauri::command]
@@ -1133,42 +1092,81 @@ async fn test_service_connection(
 
 #[tauri::command]
 async fn get_import_records(
-    limit: Option<i32>,
+    keyword: Option<String>,
+    offset: Option<i64>,
+    limit: Option<i64>,
     state: tauri::State<'_, Arc<AppState>>,
-) -> Result<Vec<ImportRecord>, String> {
+) -> Result<PaginatedResponse<ImportRecord>, String> {
     let db = state.db.lock().await;
+
+    let kw = keyword.unwrap_or_default();
+    let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(50);
-    let mut stmt = db.prepare(
-        "SELECT id, file_name, file_path, file_size, file_type, format,
-                target_source_id, target_source_name, target_type, status,
-                created_at, error_msg, tags
-         FROM import_records
-         ORDER BY created_at DESC
-         LIMIT ?1"
-    ).map_err(|e| format!("查询失败: {}", e))?;
 
-    let records = stmt.query_map(params![limit], |row| {
-        Ok(ImportRecord {
-            id: row.get(0)?,
-            file_name: row.get(1)?,
-            file_path: row.get(2)?,
-            file_size: row.get(3)?,
-            file_type: row.get(4)?,
-            format: row.get(5)?,
-            target_source_id: row.get(6)?,
-            target_source_name: row.get(7)?,
-            target_type: row.get(8)?,
-            status: row.get(9)?,
-            created_at: row.get(10)?,
-            error_msg: row.get(11).unwrap_or_default(),
-            tags: row.get(12).unwrap_or_default(),
+    // 查询总数
+    let total: i64 = if !kw.is_empty() {
+        let like = format!("%{}%", kw);
+        db.query_row(
+            "SELECT COUNT(*) FROM import_records WHERE file_name LIKE ?1 OR target_source_name LIKE ?2 OR format LIKE ?3",
+            params![like, like, like],
+            |row| row.get(0),
+        ).map_err(|e| format!("查询总数失败: {}", e))?
+    } else {
+        db.query_row("SELECT COUNT(*) FROM import_records", [], |row| row.get(0))
+            .map_err(|e| format!("查询总数失败: {}", e))?
+    };
+
+    let (sql, params_arr): (String, Vec<Box<dyn rusqlite::ToSql>>) = if !kw.is_empty() {
+        let like = format!("%{}%", kw);
+        (
+            "SELECT id, file_name, file_path, file_size, file_type, format,
+                    target_source_id, target_source_name, target_type, status,
+                    created_at, error_msg, tags
+             FROM import_records
+             WHERE file_name LIKE ?1 OR target_source_name LIKE ?2 OR format LIKE ?3
+             ORDER BY created_at DESC LIMIT ?4 OFFSET ?5".to_string(),
+            vec![
+                Box::new(like.clone()),
+                Box::new(like.clone()),
+                Box::new(like),
+                Box::new(limit),
+                Box::new(offset),
+            ],
+        )
+    } else {
+        (
+            "SELECT id, file_name, file_path, file_size, file_type, format,
+                    target_source_id, target_source_name, target_type, status,
+                    created_at, error_msg, tags
+             FROM import_records ORDER BY created_at DESC LIMIT ?1 OFFSET ?2".to_string(),
+            vec![Box::new(limit), Box::new(offset)],
+        )
+    };
+
+    let mut stmt = db.prepare(&sql).map_err(|e| format!("查询失败: {}", e))?;
+    let records: Vec<ImportRecord> = stmt
+        .query_map(rusqlite::params_from_iter(params_arr.iter().map(|p| p.as_ref())), |row| {
+            Ok(ImportRecord {
+                id: row.get(0)?,
+                file_name: row.get(1)?,
+                file_path: row.get(2)?,
+                file_size: row.get(3)?,
+                file_type: row.get(4)?,
+                format: row.get(5)?,
+                target_source_id: row.get(6)?,
+                target_source_name: row.get(7)?,
+                target_type: row.get(8)?,
+                status: row.get(9)?,
+                created_at: row.get(10)?,
+                error_msg: row.get(11).unwrap_or_default(),
+                tags: row.get(12).unwrap_or_default(),
+            })
         })
-    })
-    .map_err(|e| format!("查询失败: {}", e))?
-    .map(|r| r.expect("row"))
-    .collect();
+        .map_err(|e| format!("查询失败: {}", e))?
+        .map(|r| r.expect("row"))
+        .collect();
 
-    Ok(records)
+    Ok(PaginatedResponse { total, items: records })
 }
 
 #[tauri::command]
@@ -1909,7 +1907,7 @@ pub fn run() {
                 .to_string_lossy()
                 .to_string();
 
-            let db = init_db(&db_path).expect("init database");
+            let db = db_init::init_db(&db_path).expect("init database");
             let sources = load_sources_from_db(&db);
             let services = load_services_from_db(&db);
 
@@ -1982,6 +1980,8 @@ pub fn run() {
             update_dict_item,
             delete_dict_item,
             get_dict_categories,
+            shapefile_import::read_shapefile_info,
+            shapefile_import::import_shapefile_to_postgis,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

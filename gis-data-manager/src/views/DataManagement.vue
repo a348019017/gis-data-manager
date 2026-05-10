@@ -3,6 +3,14 @@
     <div class="page-header">
       <h2>数据管理</h2>
       <div class="header-actions">
+        <el-input
+          v-model="searchText"
+          placeholder="搜索文件名、数据源"
+          clearable
+          style="width: 220px"
+          @clear="page = 1"
+          @keyup.enter="page = 1"
+        />
         <el-button :icon="Refresh" @click="loadRecords" :loading="loading">
           刷新
         </el-button>
@@ -13,7 +21,8 @@
     </div>
 
     <!-- 导入记录列表 -->
-    <el-table :data="records" size="small" stripe style="width: 100%">
+    <div class="table-wrapper">
+      <el-table :data="records" size="small" stripe :loading="loading" style="width: 100%">
       <el-table-column prop="file_name" label="文件名" min-width="160" show-overflow-tooltip />
       <el-table-column label="类型" width="80">
         <template #default="{ row }">
@@ -83,6 +92,17 @@
     </el-table>
 
     <el-empty v-if="records.length === 0 && !loading" description="暂无导入记录" />
+    </div>
+
+    <el-pagination
+      v-if="total > 0"
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[10, 20, 50]"
+      layout="total, sizes, prev, pager, next"
+      style="margin-top: 12px; justify-content: flex-end"
+    />
 
     <!-- 下载进度提示 -->
   <el-dialog v-model="downloading" title="正在下载" width="400px" :close-on-click-modal="false" :show-close="false">
@@ -174,7 +194,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -201,13 +221,40 @@ const selectedTags = ref([])
 const dictCategories = ref([])
 const dictItemsByCategory = ref({})
 const dictLabelMap = ref({})
+const searchText = ref('')
+const page = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
 
 const ossSources = computed(() => sources.value.filter(s => s.ds_type === 'oss'))
 
+onMounted(() => {
+  loadRecords()
+  loadSources()
+  loadDictItems()
+})
+
+watch([searchText, pageSize], () => {
+  page.value = 1
+  loadRecords()
+})
+
+watch(page, () => {
+  loadRecords()
+})
+
 async function loadRecords() {
+  page.value = 1
   loading.value = true
   try {
-    records.value = await invoke('get_import_records', { limit: 50 })
+    const offset = (page.value - 1) * pageSize.value
+    const result = await invoke('get_import_records', {
+      keyword: searchText.value || null,
+      offset,
+      limit: pageSize.value,
+    })
+    records.value = result.items || []
+    total.value = result.total || 0
   } catch (err) {
     console.error('加载导入记录失败:', err)
   } finally {
@@ -438,6 +485,10 @@ onMounted(async () => {
 <style scoped>
 .data-management {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .page-header {
@@ -447,6 +498,7 @@ onMounted(async () => {
   margin-bottom: 12px;
   flex-wrap: wrap;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .page-header h2 {
@@ -458,6 +510,20 @@ onMounted(async () => {
 .header-actions {
   display: flex;
   gap: 8px;
+}
+
+.table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.table-wrapper :deep(.el-table) {
+  height: 100%;
+}
+
+.table-wrapper :deep(.el-table .el-table__body-wrapper) {
+  overflow-y: auto;
 }
 
 @media (max-width: 768px) {
@@ -479,6 +545,10 @@ onMounted(async () => {
   }
   .file-name {
     width: 100%;
+  }
+  :deep(.el-pagination) {
+    flex-wrap: wrap;
+    gap: 4px;
   }
 }
 

@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # PostGIS 空间数据库（PostgreSQL + PostGIS 扩展）
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: gis-postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gis_data
+      POSTGRES_USER: gis_admin
+      POSTGRES_PASSWORD: gis_secret_2024
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./gis-data-manager/src-tauri/init-postgis.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gis_admin -d gis_data"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO 对象存储（S3 兼容）
+  minio:
+    image: minio/minio:latest
+    container_name: gis-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio_admin
+      MINIO_ROOT_PASSWORD: minio_secret_2024
+    ports:
+      - "9000:9000"   # API 端点
+      - "9001:9001"   # Web 控制台
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO 初始化（创建 bucket）
+  minio-init:
+    image: minio/mc:latest
+    container_name: gis-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minio_admin minio_secret_2024;
+        mc mb local/gis-data --ignore-existing;
+        mc anonymous set download local/gis-data;
+        echo 'Bucket gis-data created and set to public download';
+      "
+
+volumes:
+  postgis_data:
+  minio_data:

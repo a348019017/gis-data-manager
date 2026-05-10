@@ -2,13 +2,25 @@
   <div class="datasources">
     <div class="page-header">
       <h2>数据源管理</h2>
-      <el-button type="primary" :icon="Plus" @click="showAddDialog">
-        添加数据源
-      </el-button>
+      <div class="header-actions">
+        <el-input
+          v-model="searchText"
+          placeholder="搜索名称、地址"
+          clearable
+          style="width: 220px"
+          @clear="page = 1"
+          @keyup.enter="page = 1"
+        />
+        <el-button :icon="Refresh" @click="loadSources">刷新</el-button>
+        <el-button type="primary" :icon="Plus" @click="showAddDialog">
+          添加数据源
+        </el-button>
+      </div>
     </div>
 
     <!-- 数据源列表 -->
-    <el-table :data="dataSourceList" size="small" stripe style="width: 100%">
+    <div class="table-wrapper">
+      <el-table :data="dataSourceList" size="small" stripe :loading="loading" style="width: 100%">
       <el-table-column prop="name" label="名称" min-width="150" />
       <el-table-column label="类型" width="100">
         <template #default="{ row }">
@@ -49,6 +61,19 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <el-empty v-if="dataSourceList.length === 0 && !loading" description="暂无数据源" />
+    </div>
+
+    <el-pagination
+      v-if="total > 0"
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[10, 20, 50]"
+      layout="total, sizes, prev, pager, next"
+      style="margin-top: 12px; justify-content: flex-end"
+    />
 
     <!-- 添加/编辑对话框 -->
     <el-dialog
@@ -170,7 +195,7 @@
 <script setup>
 import { ref, reactive, onMounted, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const dataSourceList = ref([])
@@ -178,6 +203,24 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const testing = ref(false)
 const formRef = ref(null)
+const searchText = ref('')
+const page = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const loading = ref(false)
+
+onMounted(() => {
+  loadSources()
+})
+
+watch([searchText, pageSize], () => {
+  page.value = 1
+  loadSources()
+})
+
+watch(page, () => {
+  loadSources()
+})
 
 const formData = reactive({
   id: '',
@@ -195,11 +238,9 @@ const formData = reactive({
 
 watch(() => formData.type, (newType) => {
   if (newType === 'oss' && formData.port === 5432) {
-    // 切换到 OSS 时根据 subtype 设置默认端口
     const defaults = { minio: 9000, aws: 443, aliyun: 443 }
     formData.port = defaults[formData.subtype] || 443
   } else if (newType === 'database' && formData.port !== 5432) {
-    // 切换到数据库时恢复默认端口
     if ([9000].includes(formData.port)) {
       formData.port = 5432
     }
@@ -281,11 +322,20 @@ function generateId() {
 }
 
 async function loadSources() {
+  loading.value = true
   try {
-    const list = await invoke('get_data_sources')
-    dataSourceList.value = list
+    const offset = (page.value - 1) * pageSize.value
+    const result = await invoke('get_data_sources', {
+      keyword: searchText.value || null,
+      offset,
+      limit: pageSize.value,
+    })
+    dataSourceList.value = result.items || []
+    total.value = result.total || 0
   } catch (err) {
     console.error('加载数据源失败:', err)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -295,18 +345,12 @@ async function handleSave() {
 
   testing.value = true
   try {
-    const source = {
-      ...formData,
-      id: formData.id || generateId(),
-    }
-
+    const source = { ...formData, id: formData.id || generateId() }
     const cmd = isEdit.value ? 'update_data_source' : 'add_data_source'
     const result = await invoke(cmd, { source })
-
     dialogVisible.value = false
     ElMessage.success(isEdit.value ? '数据源已更新' : '数据源已添加')
-
-    // 保存后自动测试连接
+    await loadSources()
     await testConnection(result)
   } catch (err) {
     ElMessage.error('保存失败: ' + err)
@@ -323,7 +367,6 @@ async function testConnection(row) {
     ElMessage[connected ? 'success' : 'error'](
       connected ? '连接成功' : '连接失败，请检查配置'
     )
-    // 更新连接状态到后端
     await invoke('update_data_source', { source: row })
   } catch (err) {
     row.connected = false
@@ -337,22 +380,22 @@ function removeDataSource(row) {
   }).then(async () => {
     try {
       await invoke('delete_data_source', { id: row.id })
-      dataSourceList.value = dataSourceList.value.filter((d) => d.id !== row.id)
       ElMessage.success('已删除')
+      loadSources()
     } catch (err) {
       ElMessage.error('删除失败: ' + err)
     }
   }).catch(() => {})
 }
-
-onMounted(() => {
-  loadSources()
-})
 </script>
 
 <style scoped>
 .datasources {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .page-header {
@@ -360,6 +403,9 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .page-header h2 {
@@ -368,9 +414,29 @@ onMounted(() => {
   color: #303133;
 }
 
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .sub-type {
   font-size: 13px;
   color: #606266;
+}
+
+.table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.table-wrapper :deep(.el-table) {
+  height: 100%;
+}
+
+.table-wrapper :deep(.el-table .el-table__body-wrapper) {
+  overflow-y: auto;
 }
 
 @media (max-width: 768px) {
@@ -387,6 +453,10 @@ onMounted(() => {
 @media (max-width: 480px) {
   .page-header h2 {
     font-size: 16px;
+  }
+  :deep(.el-pagination) {
+    flex-wrap: wrap;
+    gap: 4px;
   }
 }
 </style>

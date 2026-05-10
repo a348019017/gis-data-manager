@@ -55,33 +55,45 @@
       <!-- 数据字典 -->
       <el-tab-pane label="数据字典" name="dict">
         <el-card class="settings-card">
-          <template #header>
-            <div class="dict-header">
-              <span>标签管理</span>
-              <el-button type="primary" size="small" @click="showAddDictDialog">新增标签</el-button>
+          <div class="dict-layout">
+            <!-- 左侧分类树 -->
+            <div class="dict-sidebar">
+              <div class="dict-sidebar-header">
+                <span>分类</span>
+                <el-button type="primary" link size="small" @click="showAddCategoryDialog">+ 新增</el-button>
+              </div>
+              <el-menu
+                :default-active="dictCategory"
+                class="dict-menu"
+                @select="onCategorySelect"
+              >
+                <el-menu-item v-for="cat in dictCategoryTree" :key="cat.value" :index="cat.value">
+                  <span>{{ cat.label }}</span>
+                  <span class="item-count">{{ cat.count }}</span>
+                </el-menu-item>
+              </el-menu>
             </div>
-          </template>
 
-          <el-tabs v-model="dictCategory" type="card" @tab-change="loadDictItems">
-            <el-tab-pane
-              v-for="cat in categories"
-              :key="cat"
-              :label="categoryLabel(cat)"
-              :name="cat"
-            />
-          </el-tabs>
+            <!-- 右侧表格 -->
+            <div class="dict-content">
+              <div class="dict-content-header">
+                <span class="dict-content-title">{{ currentCategoryLabel }}</span>
+                <el-button type="primary" size="small" @click="showAddDictDialog">新增标签</el-button>
+              </div>
 
-          <el-table :data="dictItems" size="small" stripe style="margin-top: 12px">
-            <el-table-column prop="label" label="名称" min-width="120" />
-            <el-table-column prop="value" label="值" width="150" />
-            <el-table-column prop="sort_order" label="排序" width="80" />
-            <el-table-column label="操作" width="140" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="editDictItem(row)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="deleteDictItemConfirm(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+              <el-table :data="dictItems" size="small" stripe>
+                <el-table-column prop="label" label="名称" min-width="120" />
+                <el-table-column prop="value" label="值" width="150" />
+                <el-table-column prop="sort_order" label="排序" width="80" />
+                <el-table-column label="操作" width="140" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" size="small" @click="editDictItem(row)">编辑</el-button>
+                    <el-button link type="danger" size="small" @click="deleteDictItemConfirm(row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
         </el-card>
       </el-tab-pane>
 
@@ -103,12 +115,28 @@
       </el-tab-pane>
     </el-tabs>
 
+    <!-- 新增分类对话框 -->
+    <el-dialog v-model="categoryDialogVisible" title="新增分类" width="400px">
+      <el-form label-width="80px" label-position="right">
+        <el-form-item label="分类标识" required>
+          <el-input v-model="newCategoryValue" placeholder="英文标识，如 project_type" />
+        </el-form-item>
+        <el-form-item label="分类名称" required>
+          <el-input v-model="newCategoryLabel" placeholder="显示名称" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="categoryDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveNewCategory">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 数据字典编辑对话框 -->
     <el-dialog v-model="dictDialogVisible" :title="dictEditing ? '编辑标签' : '新增标签'" width="480px">
       <el-form :model="dictForm" label-width="80px" label-position="right">
         <el-form-item label="分类">
           <el-select v-model="dictForm.category" placeholder="选择分类" style="width: 100%">
-            <el-option v-for="cat in categories" :key="cat" :label="categoryLabel(cat)" :value="cat" />
+            <el-option v-for="cat in dictCategoryTree" :key="cat.value" :label="cat.label" :value="cat.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="名称" required>
@@ -189,28 +217,42 @@ async function testModelConnection() {
 }
 
 // --- 数据字典 ---
-const categories = ref([])
 const dictCategory = ref('data_type')
 const dictItems = ref([])
 const dictDialogVisible = ref(false)
 const dictEditing = ref(null)
 const dictForm = reactive({ id: '', category: '', label: '', value: '', sortOrder: 0 })
 
-const categoryLabels = {
-  data_type: '数据类型',
-  data_source: '数据来源',
-  importance: '重要程度',
-}
+// 新增分类
+const categoryDialogVisible = ref(false)
+const newCategoryValue = ref('')
+const newCategoryLabel = ref('')
 
-function categoryLabel(cat) {
-  return categoryLabels[cat] || cat
-}
+// 分类名称映射（用户自定义标签存储在这里）
+const categoryNames = reactive({})
+
+// 左侧分类树（含条目数量）
+const dictCategoryTree = ref([])
+const currentCategoryLabel = ref('')
 
 async function loadCategories() {
   try {
-    categories.value = await invoke('get_dict_categories')
-    if (categories.value.length > 0 && !categories.value.includes(dictCategory.value)) {
-      dictCategory.value = categories.value[0]
+    const items = await invoke('get_dict_items')
+    const grouped = {}
+    for (const item of items) {
+      if (!grouped[item.category]) grouped[item.category] = []
+      grouped[item.category].push(item)
+    }
+    dictCategoryTree.value = Object.keys(grouped).map(k => ({
+      value: k,
+      label: categoryNames[k] || k,
+      count: grouped[k].length,
+    }))
+    // 确保当前选中分类有效
+    if (dictCategoryTree.value.length > 0) {
+      const hasCurrent = dictCategoryTree.value.some(c => c.value === dictCategory.value)
+      if (!hasCurrent) dictCategory.value = dictCategoryTree.value[0].value
+      currentCategoryLabel.value = dictCategoryTree.value.find(c => c.value === dictCategory.value)?.label || ''
     }
   } catch (err) {
     console.error('加载分类失败:', err)
@@ -220,8 +262,42 @@ async function loadCategories() {
 async function loadDictItems() {
   try {
     dictItems.value = await invoke('get_dict_items', { category: dictCategory.value })
+    currentCategoryLabel.value = dictCategoryTree.value.find(c => c.value === dictCategory.value)?.label || ''
   } catch (err) {
     console.error('加载字典项失败:', err)
+  }
+}
+
+function onCategorySelect(key) {
+  dictCategory.value = key
+  loadDictItems()
+}
+
+function showAddCategoryDialog() {
+  newCategoryValue.value = ''
+  newCategoryLabel.value = ''
+  categoryDialogVisible.value = true
+}
+
+async function saveNewCategory() {
+  if (!newCategoryValue.value || !newCategoryLabel.value) {
+    ElMessage.warning('分类标识和名称不能为空')
+    return
+  }
+  // 插入一条占位字典项以创建分类
+  try {
+    const id = 'dict_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+    await invoke('add_dict_item', {
+      item: { id, category: newCategoryValue.value, label: newCategoryLabel.value + ' (占位)', value: newCategoryValue.value, sort_order: 0 }
+    })
+    categoryNames[newCategoryValue.value] = newCategoryLabel.value
+    categoryDialogVisible.value = false
+    ElMessage.success('分类已添加')
+    await loadCategories()
+    dictCategory.value = newCategoryValue.value
+    await loadDictItems()
+  } catch (err) {
+    ElMessage.error('添加失败: ' + err)
   }
 }
 
@@ -313,15 +389,73 @@ onMounted(() => {
   min-width: 36px;
   display: inline-block;
 }
-.dict-header {
+
+/* 数据字典左右布局 */
+.dict-layout {
+  display: flex;
+  height: 500px;
+  gap: 0;
+}
+.dict-sidebar {
+  width: 220px;
+  border-right: 1px solid #ebeef5;
+  display: flex;
+  flex-direction: column;
+}
+.dict-sidebar-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  border-bottom: 1px solid #ebeef5;
 }
+.dict-menu {
+  border: none;
+  flex: 1;
+  overflow-y: auto;
+}
+.dict-menu :deep(.el-menu-item) {
+  height: 40px;
+  line-height: 40px;
+}
+.dict-menu :deep(.el-menu-item.is-active) {
+  background-color: #ecf5ff;
+  color: #409eff;
+}
+.item-count {
+  font-size: 12px;
+  color: #909399;
+  margin-left: auto;
+}
+.dict-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dict-content-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 0 12px;
+}
+.dict-content-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+.dict-content :deep(.el-table) {
+  flex: 1;
+}
+
 @media (max-width: 768px) {
   .settings { max-width: 100%; }
   .settings h2 { font-size: 16px; }
   :deep(.el-form-item__label) { font-size: 13px !important; }
   .slider-value { margin-left: 8px; font-size: 13px; }
+  .dict-sidebar { width: 160px; }
 }
 </style>

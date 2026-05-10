@@ -2,13 +2,25 @@
   <div class="service-registry">
     <div class="page-header">
       <h2>服务注册</h2>
-      <el-button type="primary" :icon="Plus" @click="showAddDialog">
-        注册服务
-      </el-button>
+      <div class="header-actions">
+        <el-input
+          v-model="searchText"
+          placeholder="搜索服务名称、端点"
+          clearable
+          style="width: 220px"
+          @clear="page = 1"
+          @keyup.enter="page = 1"
+        />
+        <el-button :icon="Refresh" @click="loadServices">刷新</el-button>
+        <el-button type="primary" :icon="Plus" @click="showAddDialog">
+          注册服务
+        </el-button>
+      </div>
     </div>
 
     <!-- 服务列表 -->
-    <el-table :data="serviceList" size="small" stripe style="width: 100%">
+    <div class="table-wrapper">
+      <el-table :data="serviceList" size="small" stripe :loading="loading" style="width: 100%">
       <el-table-column prop="name" label="服务名称" min-width="140" />
       <el-table-column label="类型" width="110">
         <template #default="{ row }">
@@ -43,7 +55,18 @@
       </el-table-column>
     </el-table>
 
-    <el-empty v-if="serviceList.length === 0" description="暂无注册的服务" />
+    <el-empty v-if="serviceList.length === 0 && !loading" description="暂无注册的服务" />
+    </div>
+
+    <el-pagination
+      v-if="total > 0"
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[10, 20, 50]"
+      layout="total, sizes, prev, pager, next"
+      style="margin-top: 12px; justify-content: flex-end"
+    />
 
     <!-- 注册/编辑对话框 -->
     <el-dialog
@@ -109,9 +132,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import 'ol/ol.css'
 import Map from 'ol/Map'
@@ -127,7 +150,25 @@ const previewVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
 const formRef = ref(null)
+const searchText = ref('')
+const page = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const loading = ref(false)
 let previewMap = null
+
+onMounted(() => {
+  loadServices()
+})
+
+watch([searchText, pageSize], () => {
+  page.value = 1
+  loadServices()
+})
+
+watch(page, () => {
+  loadServices()
+})
 
 const formData = reactive({
   id: '',
@@ -180,10 +221,20 @@ function generateId() {
 }
 
 async function loadServices() {
+  loading.value = true
   try {
-    serviceList.value = await invoke('get_services')
+    const offset = (page.value - 1) * pageSize.value
+    const result = await invoke('get_services', {
+      keyword: searchText.value || null,
+      offset,
+      limit: pageSize.value,
+    })
+    serviceList.value = result.items || []
+    total.value = result.total || 0
   } catch (err) {
     console.error('加载服务列表失败:', err)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -234,6 +285,7 @@ async function handleSave() {
     dialogVisible.value = false
     ElMessage.success(isEdit.value ? '服务已更新' : '服务已注册')
 
+    await loadServices()
     // 自动测试连接
     await testConnection(result)
   } catch (err) {
@@ -262,17 +314,14 @@ async function testConnection(row) {
 }
 
 async function removeService(row) {
-  ElMessageBox.confirm(`确定删除服务 "${row.name}" 吗？`, '确认删除', { type: 'warning' })
-    .then(async () => {
-      try {
-        await invoke('delete_service', { id: row.id })
-        serviceList.value = serviceList.value.filter(s => s.id !== row.id)
-        ElMessage.success('已删除')
-      } catch (err) {
-        ElMessage.error('删除失败: ' + err)
-      }
-    })
-    .catch(() => {})
+  try {
+    await ElMessageBox.confirm(`确定删除服务 "${row.name}" 吗？`, '确认删除', { type: 'warning' })
+    await invoke('delete_service', { id: row.id })
+    ElMessage.success('已删除')
+    loadServices()
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error('删除失败: ' + err)
+  }
 }
 
 function buildPreviewLayers(service) {
@@ -387,6 +436,10 @@ onMounted(() => {
 <style scoped>
 .service-registry {
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .page-header {
@@ -396,12 +449,19 @@ onMounted(() => {
   margin-bottom: 12px;
   flex-wrap: wrap;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .page-header h2 {
   font-size: 18px;
   font-weight: 600;
   color: #303133;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .preview-info {
@@ -425,6 +485,20 @@ onMounted(() => {
   border-radius: 4px;
 }
 
+.table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.table-wrapper :deep(.el-table) {
+  height: 100%;
+}
+
+.table-wrapper :deep(.el-table .el-table__body-wrapper) {
+  overflow-y: auto;
+}
+
 :deep(.el-empty) {
   padding: 24px 0;
 }
@@ -445,6 +519,10 @@ onMounted(() => {
 @media (max-width: 480px) {
   .map-preview {
     height: 250px;
+  }
+  :deep(.el-pagination) {
+    flex-wrap: wrap;
+    gap: 4px;
   }
 }
 </style>
