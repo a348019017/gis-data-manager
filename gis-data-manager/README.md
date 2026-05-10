@@ -2,36 +2,6 @@
 
 基于 Tauri 2 + Vue 3 的桌面 GIS 数据管理工具。
 
-## 界面预览
-
-### AI 助手首页
-
-![AI 助手首页](../screenshots/page-home.png)
-
-### 数据概览仪表盘
-
-![数据概览](../screenshots/page-dashboard.png)
-
-### 数据源管理页
-
-![数据源管理](../screenshots/page-datasources.png)
-
-### 数据管理页
-
-![数据管理](../screenshots/page-datamanagement.png)
-
-### 服务注册页
-
-![服务注册](../screenshots/page-serviceregistry.png)
-
-### GIS 工具箱页
-
-![GIS 工具箱](../screenshots/page-gistools.png)
-
-### 系统设置页
-
-![系统设置](../screenshots/page-settings.png)
-
 ## 功能特性
 
 ### 数据源管理
@@ -163,6 +133,36 @@ docker run -d -p 9104:9000 -p 9105:9001 \
   -e "MINIO_ROOT_PASSWORD=IzJsO74Puwhl9tusijhX7kF7QAObZs5zewo2RVkA" \
   minio/minio server /data --console-address ":9001"
 ```
+
+## 界面预览
+
+### AI 助手首页
+
+![AI 助手首页](../screenshots/page-home.png)
+
+### 数据概览仪表盘
+
+![数据概览](../screenshots/page-dashboard.png)
+
+### 数据源管理页
+
+![数据源管理](../screenshots/page-datasources.png)
+
+### 数据管理页
+
+![数据管理](../screenshots/page-datamanagement.png)
+
+### 服务注册页
+
+![服务注册](../screenshots/page-serviceregistry.png)
+
+### GIS 工具箱页
+
+![GIS 工具箱](../screenshots/page-gistools.png)
+
+### 系统设置页
+
+![系统设置](../screenshots/page-settings.png)
 
 ## License
 
