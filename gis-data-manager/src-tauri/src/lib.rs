@@ -92,6 +92,19 @@ pub struct ImportRecord {
     pub created_at: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub error_msg: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tags: String, // comma-separated
+}
+
+// 数据字典条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictItem {
+    pub id: String,
+    pub category: String,  // 字典分类: data_type, data_source, importance
+    pub label: String,     // 显示名称
+    pub value: String,     // 实际值
+    #[serde(default)]
+    pub sort_order: i32,
 }
 
 const VECTOR_EXTENSIONS: &[&str] = &["shp", "geojson", "json", "gpkg", "kml", "kmz"];
@@ -222,6 +235,40 @@ fn init_db(db_path: &str) -> Result<Connection, String> {
         [],
     )
     .map_err(|e| format!("创建工具表失败: {}", e))?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS dict_items (
+            id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            label TEXT NOT NULL,
+            value TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )
+    .map_err(|e| format!("创建字典表失败: {}", e))?;
+
+    // 预置标签字典
+    conn.execute(
+        "INSERT OR IGNORE INTO dict_items (id, category, label, value, sort_order) VALUES
+            ('dict_dt_vector', 'data_type', '矢量数据', 'vector', 1),
+            ('dict_dt_raster', 'data_type', '栅格数据', 'raster', 2),
+            ('dict_dt_document', 'data_type', '文档资料', 'document', 3),
+            ('dict_ds_field', 'data_source', '外业采集', 'field', 1),
+            ('dict_ds_office', 'data_source', '内业制作', 'office', 2),
+            ('dict_ds_third', 'data_source', '第三方提供', 'third_party', 3),
+            ('dict_ds_history', 'data_source', '历史数据', 'historical', 4),
+            ('dict_imp_high', 'importance', '重要', 'high', 1),
+            ('dict_imp_normal', 'importance', '一般', 'normal', 2),
+            ('dict_imp_ref', 'importance', '参考', 'reference', 3)
+        ",
+        [],
+    )
+    .map_err(|e| format!("预置字典失败: {}", e))?;
+
+    // 为 import_records 表添加 tags 字段（兼容旧数据库）
+    conn.execute("ALTER TABLE import_records ADD COLUMN tags TEXT NOT NULL DEFAULT ''", [])
+        .ok(); // 忽略字段已存在的错误
 
     // 预置 GIS 工具
     conn.execute(
@@ -1094,7 +1141,7 @@ async fn get_import_records(
     let mut stmt = db.prepare(
         "SELECT id, file_name, file_path, file_size, file_type, format,
                 target_source_id, target_source_name, target_type, status,
-                created_at, error_msg
+                created_at, error_msg, tags
          FROM import_records
          ORDER BY created_at DESC
          LIMIT ?1"
@@ -1114,6 +1161,7 @@ async fn get_import_records(
             status: row.get(9)?,
             created_at: row.get(10)?,
             error_msg: row.get(11).unwrap_or_default(),
+            tags: row.get(12).unwrap_or_default(),
         })
     })
     .map_err(|e| format!("查询失败: {}", e))?
@@ -1138,6 +1186,7 @@ async fn delete_import_record(
 async fn import_file(
     file_path: String,
     target_source_id: String,
+    tags: Option<String>,
     state: tauri::State<'_, Arc<AppState>>,
     app: tauri::AppHandle,
 ) -> Result<ImportRecord, String> {
@@ -1165,6 +1214,8 @@ async fn import_file(
     let record_id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
 
+    let tags = tags.unwrap_or_default();
+
     let record = ImportRecord {
         id: record_id.clone(),
         file_name: file_name.clone(),
@@ -1178,14 +1229,15 @@ async fn import_file(
         status: "pending".to_string(),
         created_at: created_at.clone(),
         error_msg: String::new(),
+        tags: tags.clone(),
     };
 
     {
         let db = state.db.lock().await;
         db.execute(
-            "INSERT INTO import_records (id, file_name, file_path, file_size, file_type, format, target_source_id, target_source_name, target_type, status, created_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-            params![record.id, record.file_name, record.file_path, record.file_size as i64, record.file_type, record.format, record.target_source_id, record.target_source_name, record.target_type, record.status, record.created_at],
+            "INSERT INTO import_records (id, file_name, file_path, file_size, file_type, format, target_source_id, target_source_name, target_type, status, created_at, tags)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![record.id, record.file_name, record.file_path, record.file_size as i64, record.file_type, record.format, record.target_source_id, record.target_source_name, record.target_type, record.status, record.created_at, record.tags],
         ).map_err(|e| format!("保存导入记录失败: {}", e))?;
     }
 
@@ -1728,6 +1780,114 @@ async fn execute_gis_tool(
     }))
 }
 
+// ==================== 数据字典 ====================
+
+#[tauri::command]
+async fn get_dict_items(
+    category: Option<String>,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<DictItem>, String> {
+    let db = state.db.lock().await;
+
+    if let Some(cat) = category {
+        let mut stmt = db
+            .prepare("SELECT id, category, label, value, sort_order FROM dict_items WHERE category=?1 ORDER BY sort_order")
+            .map_err(|e| format!("查询失败: {}", e))?;
+        let items: Vec<DictItem> = stmt
+            .query_map(params![cat], |row| {
+                Ok(DictItem {
+                    id: row.get(0)?,
+                    category: row.get(1)?,
+                    label: row.get(2)?,
+                    value: row.get(3)?,
+                    sort_order: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("查询失败: {}", e))?
+            .map(|r| r.expect("row"))
+            .collect();
+        return Ok(items);
+    }
+
+    let mut stmt = db
+        .prepare("SELECT id, category, label, value, sort_order FROM dict_items ORDER BY category, sort_order")
+        .map_err(|e| format!("查询失败: {}", e))?;
+    let items: Vec<DictItem> = stmt
+        .query_map([], |row| {
+            Ok(DictItem {
+                id: row.get(0)?,
+                category: row.get(1)?,
+                label: row.get(2)?,
+                value: row.get(3)?,
+                sort_order: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("查询失败: {}", e))?
+        .map(|r| r.expect("row"))
+        .collect();
+
+    Ok(items)
+}
+
+#[tauri::command]
+async fn add_dict_item(
+    item: DictItem,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<DictItem, String> {
+    let db = state.db.lock().await;
+    db.execute(
+        "INSERT INTO dict_items (id, category, label, value, sort_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![item.id, item.category, item.label, item.value, item.sort_order],
+    )
+    .map_err(|e| format!("添加字典项失败: {}", e))?;
+    Ok(item)
+}
+
+#[tauri::command]
+async fn update_dict_item(
+    item: DictItem,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<DictItem, String> {
+    let db = state.db.lock().await;
+    db.execute(
+        "UPDATE dict_items SET label=?2, value=?3, sort_order=?4 WHERE id=?1",
+        params![item.id, item.label, item.value, item.sort_order],
+    )
+    .map_err(|e| format!("更新字典项失败: {}", e))?;
+    Ok(item)
+}
+
+#[tauri::command]
+async fn delete_dict_item(
+    id: String,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let db = state.db.lock().await;
+    let rows = db
+        .execute("DELETE FROM dict_items WHERE id=?1", params![id])
+        .map_err(|e| format!("删除失败: {}", e))?;
+    if rows == 0 {
+        return Err("字典项不存在".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_dict_categories(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<String>, String> {
+    let db = state.db.lock().await;
+    let mut stmt = db
+        .prepare("SELECT DISTINCT category FROM dict_items ORDER BY category")
+        .map_err(|e| format!("查询失败: {}", e))?;
+    let categories: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| format!("查询失败: {}", e))?
+        .map(|r| r.expect("row"))
+        .collect();
+    Ok(categories)
+}
+
 // ==================== 应用入口 ====================
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1817,6 +1977,11 @@ pub fn run() {
             update_gis_tool,
             delete_gis_tool,
             execute_gis_tool,
+            get_dict_items,
+            add_dict_item,
+            update_dict_item,
+            delete_dict_item,
+            get_dict_categories,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

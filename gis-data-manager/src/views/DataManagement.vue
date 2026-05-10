@@ -52,6 +52,18 @@
           {{ formatTime(row.created_at) }}
         </template>
       </el-table-column>
+      <el-table-column label="标签" width="160">
+        <template #default="{ row }">
+          <el-tag
+            v-for="tag in (row.tags || '').split(',').filter(Boolean)"
+            :key="tag"
+            size="small"
+            effect="plain"
+            style="margin-right: 4px"
+          >{{ dictLabel(tag) }}</el-tag>
+          <span v-if="!row.tags" class="no-data">-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
           <el-tooltip v-if="row.status === 'failed'" :content="row.error_msg" placement="top">
@@ -107,7 +119,7 @@
           <el-select
             v-model="file.targetSourceId"
             placeholder="选择目标"
-            style="width: 180px"
+            style="width: 160px"
             size="small"
           >
             <el-option
@@ -118,6 +130,21 @@
             />
           </el-select>
           <el-tag type="warning" size="small">仅OSS</el-tag>
+        </div>
+
+        <!-- 标签选择 -->
+        <div class="tags-section">
+          <span class="tags-label">标签：</span>
+          <el-checkbox-group v-model="selectedTags" size="small">
+            <template v-for="cat in dictCategories" :key="cat.value">
+              <span class="tag-group-label">{{ cat.label }}</span>
+              <el-checkbox
+                v-for="item in dictItemsByCategory[cat.value]"
+                :key="item.id"
+                :label="item.value"
+              >{{ item.label }}</el-checkbox>
+            </template>
+          </el-checkbox-group>
         </div>
 
         <div v-if="Object.keys(importProgress).length > 0" class="import-progress">
@@ -170,8 +197,12 @@ const importProgress = ref({})
 const loading = ref(false)
 const downloading = ref(false)
 const downloadProgress = ref({})
+const selectedTags = ref([])
+const dictCategories = ref([])
+const dictItemsByCategory = ref({})
+const dictLabelMap = ref({})
 
-const ossSources = computed(() => sources.value.filter(s => s.type === 'oss'))
+const ossSources = computed(() => sources.value.filter(s => s.ds_type === 'oss'))
 
 async function loadRecords() {
   loading.value = true
@@ -190,6 +221,34 @@ async function loadSources() {
   } catch (err) {
     console.error('加载数据源失败:', err)
   }
+}
+
+async function loadDictItems() {
+  try {
+    const items = await invoke('get_dict_items')
+    const grouped = {}
+    const labelMap = {}
+    const cats = {}
+    for (const item of items) {
+      if (!grouped[item.category]) grouped[item.category] = []
+      grouped[item.category].push(item)
+      labelMap[item.value] = item.label
+      cats[item.category] = true
+    }
+    dictItemsByCategory.value = grouped
+    dictLabelMap.value = labelMap
+    dictCategories.value = Object.keys(cats).map(k => ({ value: k, label: categoryLabel(k) }))
+  } catch (err) {
+    console.error('加载字典失败:', err)
+  }
+}
+
+function categoryLabel(cat) {
+  return { data_type: '数据类型', data_source: '数据来源', importance: '重要程度' }[cat] || cat
+}
+
+function dictLabel(value) {
+  return dictLabelMap.value[value] || value
 }
 
 async function pickFiles() {
@@ -227,12 +286,14 @@ async function startImport() {
 
   importing.value = true
   importProgress.value = {}
+  const tags = selectedTags.value.join(',')
   for (const file of selectedFiles.value) {
     importProgress.value[file.name] = 'pending'
     try {
       await invoke('import_file', {
         filePath: file.path,
         targetSourceId: file.targetSourceId,
+        tags,
       })
       importProgress.value[file.name] = 'success'
       ElMessage.success(`${file.name} 导入成功`)
@@ -243,6 +304,7 @@ async function startImport() {
   }
   importing.value = false
   dialogVisible.value = false
+  selectedTags.value = []
   await loadRecords()
 }
 
@@ -316,6 +378,7 @@ function resetImport() {
   selectedFiles.value = []
   importing.value = false
   importProgress.value = {}
+  selectedTags.value = []
 }
 
 function formatFileSize(bytes) {
@@ -346,6 +409,7 @@ function showImportDialog() {
 onMounted(async () => {
   loadRecords()
   loadSources()
+  loadDictItems()
 
   // 监听后端推送的上传进度
   await listen('import-progress', (event) => {
@@ -489,6 +553,26 @@ onMounted(async () => {
 .error-icon {
   color: #f56c6c;
   cursor: pointer;
+}
+
+.no-data { color: #c0c4cc; font-size: 12px; }
+
+.tags-section {
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.tags-label {
+  font-size: 14px;
+  color: #606266;
+  margin-right: 8px;
+}
+
+.tag-group-label {
+  font-size: 12px;
+  color: #909399;
+  margin-right: 4px;
+  margin-left: 8px;
 }
 
 :deep(.el-empty) {
