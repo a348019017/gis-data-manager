@@ -16,8 +16,8 @@
         "title": "GIS Data Manager",
         "width": 1100,
         "height": 750,
-        "minWidth": 800,
-        "minHeight": 500,
+        "minWidth": 400,
+        "minHeight": 800,
         "resizable": true,
         "devtools": true,
         "additionalBrowserArgs": "--remote-debugging-port=9223"
@@ -33,7 +33,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "icon": [
       "icons/icon-256.png",
       "icons/icon.ico"

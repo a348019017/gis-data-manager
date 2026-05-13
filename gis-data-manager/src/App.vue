@@ -1,144 +1,105 @@
 <template>
-  <div class="app-layout">
-    <!-- 左侧导航 -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <el-icon :size="24"><DataLine /></el-icon>
-        <span class="app-title">GIS Data</span>
+  <div class="flex flex-col h-screen">
+    <!-- 顶部 Header -->
+    <header class="navbar bg-base-100 border-b border-base-300 px-4 h-14 shrink-0">
+      <div class="flex-1 flex items-center gap-2">
+        <Icon icon="mdi:earth" width="28" class="text-primary" />
+        <span class="text-lg font-bold">GIS 数据管理</span>
       </div>
-      <el-menu
-        :default-active="activeMenu"
-        class="sidebar-menu"
-        @select="handleMenuSelect"
-      >
-        <el-menu-item index="/">
-          <el-icon><ChatDotRound /></el-icon>
-          <span>首页</span>
-        </el-menu-item>
-        <el-menu-item index="/dashboard">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>概览</span>
-        </el-menu-item>
-        <el-menu-item index="/datasources">
-          <el-icon><Connection /></el-icon>
-          <span>数据源</span>
-        </el-menu-item>
-        <el-menu-item index="/datamanagement">
-          <el-icon><FolderOpened /></el-icon>
-          <span>数据管理</span>
-        </el-menu-item>
-        <el-menu-item index="/serviceregistry">
-          <el-icon><Link /></el-icon>
-          <span>服务注册</span>
-        </el-menu-item>
-        <el-menu-item index="/gistools">
-          <el-icon><Tools /></el-icon>
-          <span>GIS工具</span>
-        </el-menu-item>
-        <el-menu-item index="/settings">
-          <el-icon><Setting /></el-icon>
-          <span>设置</span>
-        </el-menu-item>
-      </el-menu>
+      <div class="flex-none">
+        <button class="btn btn-ghost btn-square lg:hidden" @click="mobileMenuOpen = !mobileMenuOpen">
+          <Icon :icon="mobileMenuOpen ? 'mdi:close' : 'mdi:menu'" width="24" />
+        </button>
+      </div>
+    </header>
+
+    <!-- 下方：侧边栏 + 主内容 -->
+    <div class="flex flex-1 overflow-hidden">
+      <!-- 桌面端侧边栏 -->
+      <aside class="hidden lg:flex w-52 shrink-0 bg-base-200 border-r border-base-300 overflow-y-auto">
+        <ul class="menu p-4 gap-1 w-full">
+          <li v-for="item in navItems" :key="item.path">
+            <router-link :to="item.path" class="flex items-center gap-3"
+                         :class="{ active: route.path === item.path }">
+              <Icon :icon="item.icon" width="20" />
+              <span>{{ item.label }}</span>
+            </router-link>
+          </li>
+        </ul>
+      </aside>
+
+      <!-- 主内容区 -->
+      <main class="flex-1 overflow-y-auto p-4">
+        <router-view />
+      </main>
+    </div>
+
+    <!-- 移动端遮罩 -->
+    <div
+      v-if="mobileMenuOpen"
+      class="lg:hidden fixed inset-0 z-40 bg-black/50 transition-opacity"
+      @click="mobileMenuOpen = false"
+    />
+
+    <!-- 移动端侧滑菜单 -->
+    <aside
+      class="lg:hidden fixed top-0 left-0 z-50 h-full w-full bg-base-200 flex flex-col transition-transform duration-250"
+      :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'"
+    >
+      <div class="flex items-center justify-between px-4 py-3 border-b border-base-300">
+        <div class="flex items-center gap-2">
+          <Icon icon="mdi:earth" width="24" class="text-primary" />
+          <span class="text-lg font-bold">GIS 数据管理</span>
+        </div>
+        <button class="btn btn-ghost btn-square" @click="mobileMenuOpen = false">
+          <Icon icon="mdi:close" width="24" />
+        </button>
+      </div>
+      <ul class="menu p-4 gap-2 flex-1 text-lg">
+        <li v-for="item in navItems" :key="item.path">
+          <router-link
+            :to="item.path"
+            class="flex items-center gap-4 py-2"
+            :class="{ active: route.path === item.path }"
+            @click="mobileMenuOpen = false"
+          >
+            <Icon :icon="item.icon" width="22" />
+            <span>{{ item.label }}</span>
+          </router-link>
+        </li>
+      </ul>
     </aside>
 
-    <!-- 主内容区 -->
-    <main class="main-content">
-      <router-view />
-    </main>
+    <!-- Toast 容器 -->
+    <div id="toast-container" class="toast toast-top toast-end z-[100]"></div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, watch } from 'vue'
+import { Icon } from '@iconify/vue'
+import { useRoute } from 'vue-router'
 
 const route = useRoute()
-const router = useRouter()
+const mobileMenuOpen = ref(false)
 
-const activeMenu = computed(() => route.path)
+watch(() => route.path, () => {
+  mobileMenuOpen.value = false
+})
 
-function handleMenuSelect(index) {
-  router.push(index)
-}
+const navItems = [
+  { path: '/',              label: 'AI 助手',  icon: 'mdi:chat' },
+  { path: '/dashboard',     label: '概览',      icon: 'mdi:view-dashboard' },
+  { path: '/datasources',   label: '数据源',    icon: 'mdi:database' },
+  { path: '/datamanagement', label: '数据管理',  icon: 'mdi:folder-open' },
+  { path: '/serviceregistry', label: '服务注册', icon: 'mdi:link' },
+  { path: '/gistools',      label: 'GIS 工具',  icon: 'mdi:tools' },
+  { path: '/settings',      label: '设置',      icon: 'mdi:cog' },
+]
 </script>
 
-<style>
-/* 全局重置 */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html, body, #app {
-  height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background-color: #f5f7fa;
-  color: #303133;
-}
-
-/* 整体布局 */
-.app-layout {
-  display: flex;
-  height: 100vh;
-}
-
-/* 左侧导航 */
-.sidebar {
-  width: 200px;
-  min-width: 200px;
-  background-color: #ffffff;
-  border-right: 1px solid #e4e7ed;
-  display: flex;
-  flex-direction: column;
-  transition: width 0.3s, min-width 0.3s;
-}
-
-.sidebar.collapsed {
-  width: 64px;
-  min-width: 64px;
-}
-
-.sidebar-header {
-  height: 56px;
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  gap: 8px;
-  border-bottom: 1px solid #e4e7ed;
-  color: #409eff;
-  font-weight: 600;
-  font-size: 16px;
-  overflow: hidden;
-}
-
-.sidebar.collapsed .sidebar-header .app-title {
-  display: none;
-}
-
-.sidebar.collapsed .sidebar-menu .el-menu-item span {
-  display: none;
-}
-
-.sidebar.collapsed .sidebar-menu .el-menu-item {
-  justify-content: center;
-}
-
-/* 主内容区 */
-.main-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 16px;
-}
-
-@media (max-width: 900px) {
-  .sidebar {
-    width: 64px;
-    min-width: 64px;
-  }
-  .sidebar .app-title { display: none; }
-  .sidebar .el-menu-item span { display: none; }
-  .sidebar .el-menu-item { justify-content: center; }
+<style scoped>
+.transition-transform {
+  transition: transform 0.25s ease;
 }
 </style>

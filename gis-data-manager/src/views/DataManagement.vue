@@ -125,7 +125,7 @@
       <div v-if="selectedFiles.length === 0" class="file-picker-area" @click="pickFiles">
         <el-icon :size="48"><FolderOpened /></el-icon>
         <p>点击选择文件或拖拽到此处</p>
-        <p class="hint">支持矢量文件: shp, geojson, gpkg, kml, kmz</p>
+        <p class="hint">支持矢量文件: shp, geojson, gpkg, fgb, kml, kmz</p>
         <p class="hint">支持文档文件: pdf, doc, docx, xls, xlsx, txt, csv, zip</p>
       </div>
 
@@ -139,17 +139,29 @@
           <el-select
             v-model="file.targetSourceId"
             placeholder="选择目标"
-            style="width: 160px"
+            style="width: 180px"
             size="small"
           >
-            <el-option
-              v-for="src in ossSources"
-              :key="src.id"
-              :label="src.name"
-              :value="src.id"
-            />
+            <el-option-group v-if="ossSources.length > 0" label="OSS 存储">
+              <el-option
+                v-for="src in ossSources"
+                :key="src.id"
+                :label="src.name"
+                :value="src.id"
+              />
+            </el-option-group>
+            <el-option-group v-if="dbSources.length > 0" label="PostgreSQL 数据库">
+              <el-option
+                v-for="src in dbSources"
+                :key="src.id"
+                :label="src.name"
+                :value="src.id"
+              />
+            </el-option-group>
           </el-select>
-          <el-tag type="warning" size="small">仅OSS</el-tag>
+          <el-tag v-if="file.targetSourceId && ossSources.find(s => s.id === file.targetSourceId)" type="warning" size="small">OSS</el-tag>
+          <el-tag v-else-if="file.targetSourceId && dbSources.find(s => s.id === file.targetSourceId)" type="success" size="small">数据库</el-tag>
+          <el-tag v-else type="info" size="small">未选择</el-tag>
         </div>
 
         <!-- 标签选择 -->
@@ -190,22 +202,117 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 矢量导入配置对话框（Shapefile / GeoJSON / FlatGeobuf → PostGIS） -->
+    <el-dialog v-model="vectorDialogVisible" :title="vectorDialogTitle" width="700px" :close-on-click-modal="false">
+      <div v-if="vectorInfo" class="vector-import">
+        <!-- 文件基本信息 -->
+        <div class="section">
+          <h4>文件信息</h4>
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="文件名">{{ vectorInfo.file_name }}</el-descriptions-item>
+            <el-descriptions-item label="几何类型">{{ vectorInfo.geometry_type || vectorInfo.shape_type || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="记录数">{{ vectorInfo.feature_count || vectorInfo.record_count || 0 }}</el-descriptions-item>
+            <el-descriptions-item label="格式">{{ formatLabel(vectorFormat) }}</el-descriptions-item>
+            <el-descriptions-item v-if="vectorInfo.bounding_box" label="范围" :span="2">
+              {{ vectorInfo.bounding_box[0].toFixed(4) }}, {{ vectorInfo.bounding_box[1].toFixed(4) }} ~
+              {{ vectorInfo.bounding_box[2].toFixed(4) }}, {{ vectorInfo.bounding_box[3].toFixed(4) }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+
+        <!-- 坐标系统配置 -->
+        <div class="section">
+          <h4>坐标系统</h4>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <div class="crs-item">
+                <span class="crs-label">源坐标系 (EPSG):</span>
+                <el-input v-model="importSourceCrs" placeholder="自动检测" size="small" />
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="crs-item">
+                <span class="crs-label">目标坐标系 (SRID):</span>
+                <el-select v-model="importTargetCrs" placeholder="选择目标坐标系" size="small" filterable style="width: 100%">
+                  <el-option v-for="crs in COMMON_CRS" :key="crs.value" :label="crs.label" :value="crs.value" />
+                  <el-option label="自定义 (手动输入)" :value="'custom'" />
+                </el-select>
+                <el-input v-if="importTargetCrs === 'custom'" v-model="customCrsInput" placeholder="输入 EPSG 代码" size="small" style="margin-top: 4px" />
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- 目标表名 -->
+        <div class="section">
+          <h4>目标设置</h4>
+          <el-form label-width="80px" size="small">
+            <el-form-item label="目标表名">
+              <el-input v-model="importTargetTable" placeholder="输入目标表名" />
+            </el-form-item>
+            <el-form-item label="目标数据源">
+              <el-tag size="small">{{ dbSources.find(s => s.id === importTargetSourceId)?.name || '-' }}</el-tag>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <!-- 字段列表 -->
+        <div class="section" v-if="vectorFields.length > 0">
+          <h4>属性字段 ({{ vectorFields.length }})</h4>
+          <el-table :data="vectorFields" size="small" border max-height="200">
+            <el-table-column prop="name" label="字段名" min-width="120" />
+            <el-table-column label="PG 类型" width="140">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain">{{ row.pg_type }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="vectorFormat === 'shp'" label="源类型" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain">{{ getDbfTypeLabel(row.dbf_type) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="vectorFormat === 'shp'" prop="length" label="长度" width="70" align="center" />
+          </el-table>
+        </div>
+
+        <!-- 导入进度 -->
+        <div class="section" v-if="vectorImporting">
+          <h4>导入进度</h4>
+          <el-progress
+            :percentage="vectorImportProgress.total > 0 ? Math.round(vectorImportProgress.current / vectorImportProgress.total * 100) : 0"
+            :stroke-width="18"
+            :text-inside="true"
+          />
+          <div class="progress-text">
+            {{ vectorImportProgress.current }} / {{ vectorImportProgress.total }} 条记录
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="vectorDialogVisible = false" :disabled="vectorImporting">取消</el-button>
+        <el-button type="primary" @click="confirmVectorImport" :loading="vectorImporting" :disabled="vectorImporting">
+          确认导入
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Upload, Refresh, FolderOpened, WarningFilled, CircleCheck, CircleClose, Loading, Download } from '@element-plus/icons-vue'
+import { Upload, Refresh, FolderOpened, WarningFilled, CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue'
 
 async function openDialog() {
   const { open } = await import('@tauri-apps/plugin-dialog')
   return open
 }
 
-const VECTOR_EXTENSIONS = ['shp', 'geojson', 'json', 'gpkg', 'kml', 'kmz']
+const VECTOR_EXTENSIONS = ['shp', 'dbf', 'prj', 'geojson', 'json', 'gpkg', 'kml', 'kmz', 'fgb', 'fgb2']
 const DOCUMENT_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv', 'zip', 'rar', '7z']
 
 const records = ref([])
@@ -226,12 +333,59 @@ const page = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 
-const ossSources = computed(() => sources.value.filter(s => s.ds_type === 'oss'))
+const ossSources = computed(() => sources.value.filter(s => s.type === 'oss'))
+const dbSources = computed(() => sources.value.filter(s => s.type === 'database' && s.subtype === 'postgresql'))
+
+const vectorDialogTitle = computed(() => ({
+  shp: 'Shapefile 导入配置',
+  geojson: 'GeoJSON 导入配置',
+  fgb: 'FlatGeobuf 导入配置',
+  fgb2: 'FlatGeobuf 导入配置',
+}[vectorFormat.value] || '矢量导入配置'))
+
+const vectorFields = computed(() => {
+  if (!vectorInfo.value) return []
+  if (vectorFormat.value === 'shp') {
+    return (vectorInfo.value.fields || []).map(f => ({
+      ...f,
+      pg_type: f.pg_type || dbfTypeToPg(f),
+    }))
+  }
+  return vectorInfo.value.fields || []
+})
+
+function formatLabel(fmt) {
+  return { shp: 'ESRI Shapefile', geojson: 'GeoJSON', fgb: 'FlatGeobuf', fgb2: 'FlatGeobuf' }[fmt] || fmt.toUpperCase()
+}
+
+// 矢量导入状态（Shapefile / GeoJSON / FlatGeobuf → PostGIS）
+const vectorDialogVisible = ref(false)
+const vectorInfo = ref(null)       // ShapefileInfo or GeoFileInfo
+const vectorFormat = ref('')       // 'shp' | 'geojson' | 'flatgeobuf'
+const vectorImporting = ref(false)
+const vectorImportProgress = reactive({ current: 0, total: 0 })
+const importTargetTable = ref('')
+const importSourceCrs = ref('')
+const importTargetCrs = ref('4326')
+const customCrsInput = ref('')
+const importTargetSourceId = ref('')
+const vectorFilePath = ref('')     // the file being imported
+
+const COMMON_CRS = [
+  { label: 'WGS 84 (EPSG:4326)', value: '4326' },
+  { label: 'Web Mercator (EPSG:3857)', value: '3857' },
+  { label: 'CGCS2000 (EPSG:4490)', value: '4490' },
+  { label: 'CGCS2000 / 3-degree Gauss (EPSG:4527)', value: '4527' },
+  { label: 'Beijing 54 (EPSG:4214)', value: '4214' },
+  { label: 'Xian 80 (EPSG:4610)', value: '4610' },
+  { label: 'UTM Zone 50N (EPSG:32650)', value: '32650' },
+]
 
 onMounted(() => {
   loadRecords()
   loadSources()
   loadDictItems()
+  setupEventListeners()
 })
 
 watch([searchText, pageSize], () => {
@@ -244,7 +398,6 @@ watch(page, () => {
 })
 
 async function loadRecords() {
-  page.value = 1
   loading.value = true
   try {
     const offset = (page.value - 1) * pageSize.value
@@ -264,7 +417,8 @@ async function loadRecords() {
 
 async function loadSources() {
   try {
-    sources.value = await invoke('get_data_sources')
+    const result = await invoke('get_data_sources')
+    sources.value = result.items || []
   } catch (err) {
     console.error('加载数据源失败:', err)
   }
@@ -304,7 +458,7 @@ async function pickFiles() {
     multiple: true,
     filters: [{
       name: 'GIS & Document Files',
-      extensions: ['shp', 'geojson', 'json', 'gpkg', 'kml', 'kmz', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv', 'zip', 'rar', '7z']
+      extensions: ['shp', 'dbf', 'prj', 'geojson', 'json', 'gpkg', 'kml', 'kmz', 'fgb', 'fgb2', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv', 'zip', 'rar', '7z']
     }]
   })
   let filePaths = []
@@ -329,6 +483,18 @@ async function startImport() {
       ElMessage.warning(`请为文件 "${file.name}" 选择目标数据源`)
       return
     }
+  }
+
+  // 检查是否有矢量文件 → 数据库的导入
+  const dbVector = selectedFiles.value.find(f => {
+    if (!['shp', 'geojson', 'fgb', 'fgb2'].includes(f.format)) return false
+    const source = sources.value.find(s => s.id === f.targetSourceId)
+    return source && source.type === 'database' && source.subtype === 'postgresql'
+  })
+
+  if (dbVector) {
+    await openVectorImportDialog(dbVector)
+    return
   }
 
   importing.value = true
@@ -357,6 +523,10 @@ async function startImport() {
 
 async function retryImport(row) {
   if (importing.value) return
+  if (row.target_type !== 'oss') {
+    ElMessage.warning('数据库导入的重试暂不支持，请通过"导入文件"按钮重新导入')
+    return
+  }
   const source = sources.value.find(s => s.id === row.target_source_id)
   if (!source) {
     ElMessage.error('目标数据源不存在，无法重试')
@@ -421,6 +591,108 @@ async function downloadFile(row) {
   }
 }
 
+async function openVectorImportDialog(file) {
+  try {
+    const format = file.format
+    vectorFormat.value = format
+    vectorFilePath.value = file.path
+    importTargetSourceId.value = file.targetSourceId
+    importTargetTable.value = file.name.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    customCrsInput.value = ''
+    importTargetCrs.value = '4326'
+    vectorImportProgress.current = 0
+    vectorImportProgress.total = 0
+
+    if (format === 'shp') {
+      const info = await invoke('read_shapefile_info', { filePath: file.path })
+      vectorInfo.value = { ...info, fields: (info.fields || []).map(f => ({ name: f.name, pg_type: dbfTypeToPg(f), dbf_type: f.dbf_type, length: f.length, decimal_count: f.decimal_count })) }
+      vectorImportProgress.total = info.record_count
+      importSourceCrs.value = info.crs_epsg ? String(info.crs_epsg) : '4326'
+      if (info.crs_epsg && !COMMON_CRS.find(c => c.value === String(info.crs_epsg))) {
+        importTargetCrs.value = 'custom'
+        customCrsInput.value = String(info.crs_epsg)
+      } else {
+        importTargetCrs.value = info.crs_epsg ? String(info.crs_epsg) : '4326'
+      }
+    } else if (format === 'geojson') {
+      const info = await invoke('read_geojson_info', { filePath: file.path })
+      vectorInfo.value = info
+      vectorImportProgress.total = info.feature_count
+      importSourceCrs.value = info.crs_epsg ? String(info.crs_epsg) : '4326'
+    } else if (format === 'fgb' || format === 'fgb2') {
+      const info = await invoke('read_flatgeobuf_info', { filePath: file.path })
+      vectorInfo.value = info
+      vectorImportProgress.total = info.feature_count
+      importSourceCrs.value = info.crs_epsg ? String(info.crs_epsg) : '4326'
+    }
+
+    vectorDialogVisible.value = true
+  } catch (err) {
+    ElMessage.error('读取文件信息失败: ' + err)
+  }
+}
+
+function dbfTypeToPg(field) {
+  const t = field.dbf_type
+  if (t === 'N' || t === 'F') {
+    return field.decimal_count > 0 ? 'DOUBLE PRECISION'
+      : field.length <= 4 ? 'SMALLINT'
+      : field.length <= 9 ? 'INTEGER'
+      : 'BIGINT'
+  }
+  if (t === 'I') return field.length <= 4 ? 'SMALLINT' : field.length <= 9 ? 'INTEGER' : 'BIGINT'
+  if (t === 'L') return 'BOOLEAN'
+  if (t === 'D') return 'DATE'
+  return `VARCHAR(${Math.max(field.length, 255)})`
+}
+
+async function confirmVectorImport() {
+  if (!importTargetTable.value) {
+    ElMessage.warning('请输入目标表名')
+    return
+  }
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(importTargetTable.value)) {
+    ElMessage.warning('表名只能包含字母、数字和下划线，且不能以数字开头')
+    return
+  }
+
+  const targetSrid = importTargetCrs.value === 'custom'
+    ? parseInt(customCrsInput.value)
+    : parseInt(importTargetCrs.value)
+  if (!targetSrid || isNaN(targetSrid)) {
+    ElMessage.warning('请输入有效的坐标系 SRID')
+    return
+  }
+
+  vectorImporting.value = true
+  vectorImportProgress.current = 0
+
+  const cmdMap = {
+    shp: 'import_shapefile_to_postgis',
+    geojson: 'import_geojson_to_postgis',
+    fgb: 'import_flatgeobuf_to_postgis',
+    fgb2: 'import_flatgeobuf_to_postgis',
+  }
+  const command = cmdMap[vectorFormat.value]
+
+  try {
+    const result = await invoke(command, {
+      filePath: vectorFilePath.value,
+      targetSourceId: importTargetSourceId.value,
+      tableName: importTargetTable.value,
+      targetSrid,
+    })
+    ElMessage.success(result)
+    vectorDialogVisible.value = false
+    dialogVisible.value = false
+    await loadRecords()
+  } catch (err) {
+    ElMessage.error('导入失败: ' + err)
+  } finally {
+    vectorImporting.value = false
+  }
+}
+
 function resetImport() {
   selectedFiles.value = []
   importing.value = false
@@ -448,16 +720,16 @@ function statusLabel(status) {
   return { success: '成功', pending: '处理中', failed: '失败' }[status] || status
 }
 
-function showImportDialog() {
-  loadSources()
+async function showImportDialog() {
+  await loadSources()
   dialogVisible.value = true
 }
 
-onMounted(async () => {
-  loadRecords()
-  loadSources()
-  loadDictItems()
+function getDbfTypeLabel(type) {
+  return { C: '字符', N: '数值', F: '浮点', L: '逻辑', D: '日期', I: '整型' }[type] || type
+}
 
+async function setupEventListeners() {
   // 监听后端推送的上传进度
   await listen('import-progress', (event) => {
     const { file_name, status, bytes_sent, total_bytes } = event.payload
@@ -479,7 +751,14 @@ onMounted(async () => {
       downloadProgress.value[file_name] = 'success'
     }
   })
-})
+
+  // 监听后端推送的矢量导入进度
+  await listen('shapefile-import-progress', (event) => {
+    const { current, total } = event.payload
+    vectorImportProgress.current = current
+    vectorImportProgress.total = total
+  })
+}
 </script>
 
 <style scoped>
@@ -647,5 +926,36 @@ onMounted(async () => {
 
 :deep(.el-empty) {
   padding: 24px 0;
+}
+
+.vector-import .section {
+  margin-bottom: 16px;
+}
+
+.shapefile-import .section h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin: 0 0 8px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.shapefile-import .crs-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shapefile-import .crs-label {
+  font-size: 13px;
+  color: #606266;
+}
+
+.shapefile-import .progress-text {
+  text-align: center;
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
 }
 </style>

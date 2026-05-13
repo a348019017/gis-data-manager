@@ -102,7 +102,10 @@
         <el-card class="settings-card">
           <el-form label-width="120px" label-position="right">
             <el-form-item label="数据库路径">
-              <el-input :model-value="generalConfig.dbPath" disabled />
+              <div style="display: flex; gap: 8px; width: 100%">
+                <el-input :model-value="generalConfig.dbPath" disabled style="flex: 1" />
+                <el-button @click="selectNewDb" :loading="switchingDb">切换</el-button>
+              </div>
             </el-form-item>
             <el-form-item label="数据目录">
               <el-input :model-value="generalConfig.dataDir" disabled />
@@ -111,6 +114,20 @@
               <span>{{ generalConfig.version }}</span>
             </el-form-item>
           </el-form>
+        </el-card>
+
+        <!-- 数据库表预览 -->
+        <el-card class="settings-card">
+          <template #header>
+            <div class="card-header">
+              <span>数据库表预览</span>
+              <el-button size="small" @click="loadTables" :loading="loadingTables">刷新</el-button>
+            </div>
+          </template>
+          <el-table :data="dbTables" size="small" stripe max-height="260">
+            <el-table-column prop="name" label="表名" />
+            <el-table-column prop="row_count" label="行数" width="100" />
+          </el-table>
         </el-card>
       </el-tab-pane>
     </el-tabs>
@@ -188,6 +205,60 @@ const generalConfig = reactive({
   dataDir: '',
   version: '0.1.0',
 })
+
+// --- 数据库表预览 ---
+const dbTables = ref([])
+const loadingTables = ref(false)
+
+async function loadTables() {
+  loadingTables.value = true
+  try {
+    dbTables.value = await invoke('preview_db_tables')
+  } catch (err) {
+    ElMessage.error('获取表信息失败: ' + err)
+  } finally {
+    loadingTables.value = false
+  }
+}
+
+// --- 切换数据库 ---
+const switchingDb = ref(false)
+
+async function selectNewDb() {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'SQLite', extensions: ['db', 'sqlite', 'sqlite3'] }],
+    })
+    if (!selected) return
+
+    try {
+      await ElMessageBox.confirm(
+        `确定切换到数据库: ${selected}？切换后当前数据将不再可见。`,
+        '确认切换数据库',
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
+
+    switchingDb.value = true
+    const result = await invoke('switch_database', { dbPath: selected })
+    generalConfig.dbPath = result.app_info.db_path || ''
+    generalConfig.dataDir = result.app_info.data_dir || ''
+    if (result.created_tables && result.created_tables.length > 0) {
+      ElMessage.warning(`数据库缺少表 (${result.created_tables.join(', ')}), 已自动创建`)
+    } else {
+      ElMessage.success('数据库切换成功')
+    }
+    await loadTables()
+  } catch (err) {
+    ElMessage.error('切换数据库失败: ' + err)
+  } finally {
+    switchingDb.value = false
+  }
+}
 
 async function saveModelConfig() {
   const valid = await modelFormRef.value?.validate().catch(() => false)
@@ -360,7 +431,11 @@ async function loadSettings() {
   }
   try {
     const info = await invoke('get_app_info')
-    if (info) Object.assign(generalConfig, info)
+    if (info) {
+      generalConfig.dbPath = info.db_path || ''
+      generalConfig.dataDir = info.data_dir || ''
+      generalConfig.version = info.version || '0.1.0'
+    }
   } catch (err) {
     console.error('获取应用信息失败:', err)
   }
@@ -382,6 +457,11 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 .settings-card { margin-bottom: 12px; }
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
 .slider-value {
   margin-left: 12px;
   color: #606266;

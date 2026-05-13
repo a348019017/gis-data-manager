@@ -1,8 +1,8 @@
 <template>
-  <div class="service-registry">
-    <div class="page-header">
-      <h2>服务注册</h2>
-      <div class="header-actions">
+  <div class="flex flex-col h-full min-h-0">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2 shrink-0">
+      <h2 class="text-lg font-semibold">服务注册</h2>
+      <div class="flex gap-2 items-center">
         <el-input
           v-model="searchText"
           placeholder="搜索服务名称、端点"
@@ -11,70 +11,21 @@
           @clear="page = 1"
           @keyup.enter="page = 1"
         />
-        <el-button :icon="Refresh" @click="loadServices">刷新</el-button>
-        <el-button type="primary" :icon="Plus" @click="showAddDialog">
-          注册服务
-        </el-button>
+        <button class="btn btn-ghost btn-sm" @click="loadServices">
+          <Icon icon="mdi:refresh" width="18" />刷新
+        </button>
+        <button class="btn btn-primary btn-sm" @click="showAddDialog">
+          <Icon icon="mdi:plus" width="18" />注册服务
+        </button>
       </div>
     </div>
 
-    <!-- 服务列表 -->
-    <div class="table-wrapper">
-      <el-table :data="serviceList" size="small" stripe :loading="loading" style="width: 100%">
-      <el-table-column prop="name" label="服务名称" min-width="140" />
-      <el-table-column label="类型" width="110">
-        <template #default="{ row }">
-          <el-tag size="small" :type="typeTagColor(row.type)">
-            {{ typeLabel(row.type) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="endpoint" label="端点地址" min-width="250" show-overflow-tooltip />
-      <el-table-column label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag size="small" :type="row.connected ? 'success' : 'info'">
-            {{ row.connected ? '已连接' : '未连接' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="previewService(row)">
-            预览
-          </el-button>
-          <el-button link type="primary" size="small" @click="testConnection(row)">
-            测试
-          </el-button>
-          <el-button link type="primary" size="small" @click="showEditDialog(row)">
-            编辑
-          </el-button>
-          <el-button link type="danger" size="small" @click="removeService(row)">
-            删除
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <el-empty v-if="serviceList.length === 0 && !loading" description="暂无注册的服务" />
+    <div class="flex-1 min-h-0">
+      <AppTable :data="serviceList" :columns="serviceColumns" :loading="loading" :show-pagination="false" />
     </div>
 
-    <el-pagination
-      v-if="total > 0"
-      v-model:current-page="page"
-      v-model:page-size="pageSize"
-      :total="total"
-      :page-sizes="[10, 20, 50]"
-      layout="total, sizes, prev, pager, next"
-      style="margin-top: 12px; justify-content: flex-end"
-    />
-
     <!-- 注册/编辑对话框 -->
-    <el-dialog
-      v-model="dialogVisible"
-      :title="isEdit ? '编辑服务' : '注册服务'"
-      width="500px"
-      @close="resetForm"
-    >
+    <AppModal v-model="dialogVisible" :title="isEdit ? '编辑服务' : '注册服务'" @closed="resetForm">
       <el-form ref="formRef" :model="formData" :rules="formRules" label-width="80px" label-position="right">
         <el-form-item label="服务名称" prop="name">
           <el-input v-model="formData.name" placeholder="输入服务名称" />
@@ -92,50 +43,49 @@
         <el-form-item label="端点地址" prop="endpoint">
           <el-input v-model="formData.endpoint" placeholder="http://localhost:8080/geoserver/gwc/service/wmts" />
         </el-form-item>
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="用户名" prop="username">
-              <el-input v-model="formData.username" placeholder="可选" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="密码" prop="password">
-              <el-input v-model="formData.password" type="password" show-password placeholder="可选" />
-            </el-form-item>
-          </el-col>
-        </el-row>
+        <div class="grid grid-cols-2 gap-3">
+          <el-form-item label="用户名" prop="username">
+            <el-input v-model="formData.username" placeholder="可选" />
+          </el-form-item>
+          <el-form-item label="密码" prop="password">
+            <el-input v-model="formData.password" type="password" show-password placeholder="可选" />
+          </el-form-item>
+        </div>
         <el-form-item label="备注" prop="remark">
           <el-input v-model="formData.remark" type="textarea" :rows="2" placeholder="可选" />
         </el-form-item>
       </el-form>
-
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="handleSave">
+        <button class="btn btn-ghost" @click="dialogVisible = false">取消</button>
+        <button class="btn btn-primary" :disabled="saving" @click="handleSave">
+          <span v-if="saving" class="loading loading-spinner loading-xs"></span>
           {{ isEdit ? '保存' : '注册并测试' }}
-        </el-button>
+        </button>
       </template>
-    </el-dialog>
+    </AppModal>
 
     <!-- 地图预览对话框 -->
-    <el-dialog v-model="previewVisible" title="地图预览" width="900px" :close-on-click-modal="false">
-      <div class="preview-info">
+    <AppModal v-model="previewVisible" title="地图预览" :close-on-backdrop="false" wide>
+      <div class="flex flex-col gap-1 mb-2 text-xs text-base-content/70">
         <span>服务: {{ previewServiceName }}</span>
-        <span class="preview-url">{{ previewEndpoint }}</span>
+        <span class="text-primary break-all">{{ previewEndpoint }}</span>
       </div>
-      <div id="map-preview-container" class="map-preview"></div>
+      <div id="map-preview-container" class="w-full h-[500px] max-sm:h-[350px] max-[480px]:h-[250px] border border-base-300 rounded"></div>
       <template #footer>
-        <el-button @click="closePreview">关闭</el-button>
+        <button class="btn" @click="closePreview">关闭</button>
       </template>
-    </el-dialog>
+    </AppModal>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, nextTick, watch, h } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, Refresh } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { Icon } from '@iconify/vue'
+import AppTable from '@/components/AppTable.vue'
+import AppModal from '@/components/AppModal.vue'
+import { useToast } from '@/components/AppToast'
+import { useConfirm } from '@/components/AppConfirm'
 import 'ol/ol.css'
 import Map from 'ol/Map'
 import View from 'ol/View'
@@ -143,6 +93,9 @@ import TileLayer from 'ol/layer/Tile'
 import OSM from 'ol/source/OSM'
 import TileWMS from 'ol/source/TileWMS'
 import XYZ from 'ol/source/XYZ'
+
+const toast = useToast()
+const confirm = useConfirm()
 
 const serviceList = ref([])
 const dialogVisible = ref(false)
@@ -157,30 +110,37 @@ const total = ref(0)
 const loading = ref(false)
 let previewMap = null
 
-onMounted(() => {
-  loadServices()
-})
+const typeLabels = { wmts: 'WMTS', tms: 'TMS', wms: 'WMS', wfs: 'WFS', geoserver: 'GeoServer', arcgis: 'ArcGIS' }
 
-watch([searchText, pageSize], () => {
-  page.value = 1
-  loadServices()
-})
+const serviceColumns = [
+  { accessorKey: 'name', header: '服务名称' },
+  {
+    accessorKey: 'type',
+    header: '类型',
+    cell: (info) => h('span', { class: `badge badge-sm ${badgeType(info.getValue())}` }, typeLabels[info.getValue()] || info.getValue()),
+  },
+  { accessorKey: 'endpoint', header: '端点地址' },
+  {
+    accessorKey: 'connected',
+    header: '状态',
+    cell: (info) => h('span', { class: `badge badge-sm ${info.getValue() ? 'badge-success' : 'badge-ghost'}` }, info.getValue() ? '已连接' : '未连接'),
+  },
+  {
+    id: 'actions',
+    header: '操作',
+    cell: (info) => h('div', { class: 'flex gap-1 flex-wrap' }, [
+      h('button', { class: 'btn btn-xs btn-ghost text-primary', onClick: () => previewService(info.row.original) }, '预览'),
+      h('button', { class: 'btn btn-xs btn-ghost text-primary', onClick: () => testConnection(info.row.original) }, '测试'),
+      h('button', { class: 'btn btn-xs btn-ghost text-primary', onClick: () => showEditDialog(info.row.original) }, '编辑'),
+      h('button', { class: 'btn btn-xs btn-ghost text-error', onClick: () => removeService(info.row.original) }, '删除'),
+    ]),
+  },
+]
 
-watch(page, () => {
-  loadServices()
-})
+const badgeTypes = { wmts: 'badge-ghost', tms: 'badge-success', wms: 'badge-warning', wfs: 'badge-info', geoserver: 'badge-error', arcgis: 'badge-ghost' }
+function badgeType(type) { return badgeTypes[type] || 'badge-ghost' }
 
-const formData = reactive({
-  id: '',
-  name: '',
-  type: 'wmts',
-  endpoint: '',
-  username: '',
-  password: '',
-  remark: '',
-  connected: false,
-})
-
+const formData = reactive({ id: '', name: '', type: 'wmts', endpoint: '', username: '', password: '', remark: '', connected: false })
 const previewServiceName = ref('')
 const previewEndpoint = ref('')
 
@@ -190,197 +150,98 @@ const formRules = {
   endpoint: [{ required: true, message: '请输入端点地址', trigger: 'blur' }],
 }
 
-const typeLabels = {
-  wmts: 'WMTS',
-  tms: 'TMS',
-  wms: 'WMS',
-  wfs: 'WFS',
-  geoserver: 'GeoServer',
-  arcgis: 'ArcGIS',
-}
+function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }
 
-const typeColors = {
-  wmts: '',
-  tms: 'success',
-  wms: 'warning',
-  wfs: 'info',
-  geoserver: 'danger',
-  arcgis: '',
-}
-
-function typeLabel(type) {
-  return typeLabels[type] || type
-}
-
-function typeTagColor(type) {
-  return typeColors[type] || 'info'
-}
-
-function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
-}
+watch([searchText, pageSize], () => { page.value = 1; loadServices() })
+watch(page, () => { loadServices() })
 
 async function loadServices() {
   loading.value = true
   try {
     const offset = (page.value - 1) * pageSize.value
-    const result = await invoke('get_services', {
-      keyword: searchText.value || null,
-      offset,
-      limit: pageSize.value,
-    })
+    const result = await invoke('get_services', { keyword: searchText.value || null, offset, limit: pageSize.value })
     serviceList.value = result.items || []
     total.value = result.total || 0
-  } catch (err) {
-    console.error('加载服务列表失败:', err)
-  } finally {
-    loading.value = false
-  }
+  } catch (err) { console.error('加载服务列表失败:', err) }
+  finally { loading.value = false }
 }
 
-function showAddDialog() {
-  isEdit.value = false
-  dialogVisible.value = true
-}
-
+function showAddDialog() { isEdit.value = false; dialogVisible.value = true }
 function showEditDialog(row) {
   isEdit.value = true
-  Object.assign(formData, {
-    id: row.id,
-    name: row.name,
-    type: row.type,
-    endpoint: row.endpoint,
-    username: row.username || '',
-    password: row.password || '',
-    remark: row.remark || '',
-    connected: row.connected,
-  })
+  Object.assign(formData, { id: row.id, name: row.name, type: row.type, endpoint: row.endpoint, username: row.username || '', password: row.password || '', remark: row.remark || '', connected: row.connected })
   dialogVisible.value = true
 }
-
 function resetForm() {
   formRef.value?.resetFields()
-  Object.assign(formData, {
-    id: '',
-    name: '',
-    type: 'wmts',
-    endpoint: '',
-    username: '',
-    password: '',
-    remark: '',
-    connected: false,
-  })
+  Object.assign(formData, { id: '', name: '', type: 'wmts', endpoint: '', username: '', password: '', remark: '', connected: false })
 }
 
 async function handleSave() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
-
   saving.value = true
   try {
     const service = { ...formData, id: formData.id || generateId() }
     const cmd = isEdit.value ? 'update_service' : 'add_service'
     const result = await invoke(cmd, { service })
-
     dialogVisible.value = false
-    ElMessage.success(isEdit.value ? '服务已更新' : '服务已注册')
-
+    toast.success(isEdit.value ? '服务已更新' : '服务已注册')
     await loadServices()
-    // 自动测试连接
     await testConnection(result)
-  } catch (err) {
-    ElMessage.error('保存失败: ' + err)
-  } finally {
-    saving.value = false
-  }
+  } catch (err) { toast.error('保存失败: ' + err) }
+  finally { saving.value = false }
 }
 
 async function testConnection(row) {
-  ElMessage.info(`正在测试连接: ${row.name}`)
+  toast.info(`正在测试连接: ${row.name}`)
   try {
     const connected = await invoke('test_service_connection', { service: row })
     row.connected = connected
-
-    // 更新连接状态到后端
     await invoke('update_service', { service: row })
-
-    ElMessage[connected ? 'success' : 'error'](
-      connected ? '连接成功' : '连接失败，请检查配置'
-    )
-  } catch (err) {
-    row.connected = false
-    ElMessage.error('连接测试失败: ' + err)
-  }
+    toast[connected ? 'success' : 'error'](connected ? '连接成功' : '连接失败，请检查配置')
+  } catch (err) { row.connected = false; toast.error('连接测试失败: ' + err) }
 }
 
 async function removeService(row) {
+  const ok = await confirm('确认删除', `确定删除服务 "${row.name}" 吗？`)
+  if (!ok) return
   try {
-    await ElMessageBox.confirm(`确定删除服务 "${row.name}" 吗？`, '确认删除', { type: 'warning' })
     await invoke('delete_service', { id: row.id })
-    ElMessage.success('已删除')
+    toast.success('已删除')
     loadServices()
-  } catch (err) {
-    if (err !== 'cancel') ElMessage.error('删除失败: ' + err)
-  }
+  } catch (err) { toast.error('删除失败: ' + err) }
 }
 
 function buildPreviewLayers(service) {
   const endpoint = service.endpoint
   const layers = []
-
   switch (service.type) {
     case 'wmts': {
-      // WMTS 用简化 XYZ 模板，需用户根据实际服务调整
       const wmtsUrl = endpoint.endsWith('/') ? endpoint + '{TileMatrix}/{TileRow}/{TileCol}.png' : endpoint + '/{TileMatrix}/{TileRow}/{TileCol}.png'
-      layers.push(new TileLayer({
-        source: new XYZ({ url: wmtsUrl, tileSize: 256 }),
-        visible: true,
-      }))
+      layers.push(new TileLayer({ source: new XYZ({ url: wmtsUrl, tileSize: 256 }), visible: true }))
       break
     }
     case 'wms': {
-      layers.push(new TileLayer({
-        source: new TileWMS({
-          url: endpoint,
-          params: { 'LAYERS': 'topp:states', 'TILED': true, 'VERSION': '1.1.1' },
-          serverType: 'geoserver',
-          crossOrigin: 'anonymous',
-        }),
-        visible: true,
-      }))
+      layers.push(new TileLayer({ source: new TileWMS({ url: endpoint, params: { 'LAYERS': 'topp:states', 'TILED': true, 'VERSION': '1.1.1' }, serverType: 'geoserver', crossOrigin: 'anonymous' }), visible: true }))
       break
     }
     case 'tms': {
       const tmsUrl = endpoint.endsWith('/') ? endpoint + '{z}/{x}/{y}.png' : endpoint + '/{z}/{x}/{y}.png'
-      layers.push(new TileLayer({
-        source: new XYZ({ url: tmsUrl, tileSize: 256 }),
-        visible: true,
-      }))
+      layers.push(new TileLayer({ source: new XYZ({ url: tmsUrl, tileSize: 256 }), visible: true }))
       break
     }
     case 'geoserver': {
-      const baseUrl = endpoint.replace(/\/rest.*/, '')
-      layers.push(new TileLayer({
-        source: new TileWMS({
-          url: `${baseUrl}/gwc/service/wms`,
-          params: { 'LAYERS': 'topp:states', 'TILED': true, 'VERSION': '1.1.1' },
-          serverType: 'geoserver',
-          crossOrigin: 'anonymous',
-        }),
-        visible: true,
-      }))
+      const baseUrl2 = endpoint.replace(/\/rest.*/, '')
+      layers.push(new TileLayer({ source: new TileWMS({ url: `${baseUrl2}/gwc/service/wms`, params: { 'LAYERS': 'topp:states', 'TILED': true, 'VERSION': '1.1.1' }, serverType: 'geoserver', crossOrigin: 'anonymous' }), visible: true }))
       break
     }
     case 'arcgis': {
       const arcUrl = endpoint.endsWith('/') ? endpoint + 'tile/{z}/{y}/{x}' : endpoint + '/tile/{z}/{y}/{x}'
-      layers.push(new TileLayer({
-        source: new XYZ({ url: arcUrl, tileSize: 256 }),
-        visible: true,
-      }))
+      layers.push(new TileLayer({ source: new XYZ({ url: arcUrl, tileSize: 256 }), visible: true }))
       break
     }
   }
-
   return layers
 }
 
@@ -388,141 +249,24 @@ function previewService(row) {
   previewServiceName.value = row.name
   previewEndpoint.value = row.endpoint
   previewVisible.value = true
-
-  nextTick(() => {
-    initMap(row)
-  })
+  nextTick(() => { initMap(row) })
 }
 
 function initMap(service) {
-  if (previewMap) {
-    previewMap.setTarget(null)
-    previewMap = null
-  }
-
+  if (previewMap) { previewMap.setTarget(null); previewMap = null }
   const layers = buildPreviewLayers(service)
-
-  // 添加底图
-  const osmLayer = new TileLayer({
-    source: new OSM(),
-    visible: true,
-    opacity: 0.3,
-  })
-
+  const osmLayer = new TileLayer({ source: new OSM(), visible: true, opacity: 0.3 })
   previewMap = new Map({
     target: 'map-preview-container',
     layers: [osmLayer, ...layers],
-    view: new View({
-      center: [12900000, 4900000], // China center
-      zoom: 4,
-      projection: 'EPSG:3857',
-    }),
+    view: new View({ center: [12900000, 4900000], zoom: 4, projection: 'EPSG:3857' }),
   })
 }
 
 function closePreview() {
-  if (previewMap) {
-    previewMap.setTarget(null)
-    previewMap = null
-  }
+  if (previewMap) { previewMap.setTarget(null); previewMap = null }
   previewVisible.value = false
 }
 
-onMounted(() => {
-  loadServices()
-})
+onMounted(() => { loadServices() })
 </script>
-
-<style scoped>
-.service-registry {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.page-header h2 {
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.header-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.preview-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-  font-size: 13px;
-  color: #606266;
-}
-
-.preview-url {
-  color: #409eff;
-  word-break: break-all;
-}
-
-.map-preview {
-  width: 100%;
-  height: 500px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-}
-
-.table-wrapper {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.table-wrapper :deep(.el-table) {
-  height: 100%;
-}
-
-.table-wrapper :deep(.el-table .el-table__body-wrapper) {
-  overflow-y: auto;
-}
-
-:deep(.el-empty) {
-  padding: 24px 0;
-}
-
-@media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .map-preview {
-    height: 350px;
-  }
-  .service-registry {
-    max-width: 100%;
-  }
-}
-
-@media (max-width: 480px) {
-  .map-preview {
-    height: 250px;
-  }
-  :deep(.el-pagination) {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-}
-</style>

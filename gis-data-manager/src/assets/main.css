@@ -1,0 +1,35 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: light --default, dark;
+}
+
+/* 覆盖 DaisyUI light 主题颜色以对齐 Element Plus 配色 */
+:root[data-theme="light"],
+:root {
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(97% 0.01 264);
+  --color-base-300: oklch(93% 0.01 264);
+  --color-base-content: oklch(21% 0.01 264);
+  --color-primary: oklch(61% 0.19 250);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(55% 0.02 264);
+  --color-secondary-content: oklch(100% 0 0);
+  --color-accent: oklch(72% 0.19 142);
+  --color-accent-content: oklch(21% 0.01 264);
+  --color-error: oklch(65% 0.22 25);
+  --color-error-content: oklch(100% 0 0);
+  --color-success: oklch(72% 0.19 142);
+  --color-success-content: oklch(21% 0.01 264);
+  --color-warning: oklch(75% 0.16 70);
+  --color-warning-content: oklch(21% 0.01 264);
+  --color-info: oklch(55% 0.02 264);
+  --color-info-content: oklch(100% 0 0);
+  --color-neutral: oklch(27% 0.01 264);
+  --color-neutral-content: oklch(100% 0 0);
+}
+
+/* ElMessage 居中 */
+.el-message {
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+}

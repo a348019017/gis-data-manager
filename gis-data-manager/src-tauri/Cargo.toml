@@ -32,6 +32,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 minio = { version = "0.4", default-features = false, features = ["rustls-tls", "localhost", "default-crypto"] }
 shapefile = "0.6"
+geozero = { version = "0.15.1", features = ["with-geojson", "with-geo", "with-shp"] }
+geo-types = "0.7"
+flatgeobuf = "6"
 byteorder = "1"
 flate2 = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
