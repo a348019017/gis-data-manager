@@ -7,6 +7,7 @@ const props = defineProps({
   closable: { type: Boolean, default: true },
   closeOnBackdrop: { type: Boolean, default: true },
   wide: Boolean,
+  mobileFullscreen: Boolean,
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -35,8 +36,11 @@ function onClose() {
 
 <template>
   <dialog ref="dialogRef" class="modal" @click="onBackdropClick">
-    <div class="modal-box" :class="{ 'max-w-3xl': wide, 'max-w-lg': !wide }">
-      <h3 v-if="title" class="font-bold text-lg mb-4">{{ title }}</h3>
+    <div class="modal-box" :class="[
+      wide ? 'max-w-3xl' : 'max-w-lg',
+      mobileFullscreen ? 'max-sm:!max-w-full max-sm:!h-dvh max-sm:!max-h-none max-sm:!rounded-none max-sm:!m-0 max-sm:!p-3 max-sm:flex max-sm:flex-col' : '',
+    ]">
+      <h3 v-if="title" class="font-bold text-lg mb-4 max-sm:text-base">{{ title }}</h3>
       <button v-if="closable" class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
               @click="onClose">✕</button>
       <slot />

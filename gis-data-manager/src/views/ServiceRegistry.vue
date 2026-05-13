@@ -65,14 +65,14 @@
     </AppModal>
 
     <!-- 地图预览对话框 -->
-    <AppModal v-model="previewVisible" title="地图预览" :close-on-backdrop="false" wide>
+    <AppModal v-model="previewVisible" title="地图预览" :close-on-backdrop="false" wide mobile-fullscreen>
       <div class="flex flex-col gap-1 mb-2 text-xs text-base-content/70">
         <span>服务: {{ previewServiceName }}</span>
         <span class="text-primary break-all">{{ previewEndpoint }}</span>
       </div>
-      <div id="map-preview-container" class="w-full h-[500px] max-sm:h-[350px] max-[480px]:h-[250px] border border-base-300 rounded"></div>
+      <div id="map-preview-container" class="w-full h-[500px] max-sm:h-auto max-sm:flex-1 max-sm:min-h-0 border border-base-300 rounded"></div>
       <template #footer>
-        <button class="btn" @click="closePreview">关闭</button>
+        <button class="btn btn-sm" @click="closePreview">关闭</button>
       </template>
     </AppModal>
   </div>
@@ -119,7 +119,7 @@ const serviceColumns = [
     header: '类型',
     cell: (info) => h('span', { class: `badge badge-sm ${badgeType(info.getValue())}` }, typeLabels[info.getValue()] || info.getValue()),
   },
-  { accessorKey: 'endpoint', header: '端点地址' },
+  { accessorKey: 'endpoint', header: '端点地址', meta: { hideOnMobile: true } },
   {
     accessorKey: 'connected',
     header: '状态',

@@ -141,9 +141,10 @@ const sourceColumns = [
   {
     accessorKey: 'subtype',
     header: '子类型',
+    meta: { hideOnMobile: true },
     cell: (info) => h('span', { class: 'text-xs text-base-content/70' }, typeMap[info.getValue()] || info.getValue()),
   },
-  { accessorKey: 'host', header: '地址' },
+  { accessorKey: 'host', header: '地址', meta: { hideOnMobile: true } },
   {
     accessorKey: 'port',
     header: '端口',

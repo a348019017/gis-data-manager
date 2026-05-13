@@ -1,16 +1,23 @@
 <template>
   <div class="flex flex-col h-screen">
     <!-- 顶部 Header -->
-    <header class="navbar bg-base-100 border-b border-base-300 px-4 h-14 shrink-0">
-      <div class="flex-1 flex items-center gap-2">
+    <header class="navbar bg-base-100 border-b border-base-300 px-4 h-14 shrink-0 relative">
+      <!-- 移动端菜单按钮（绝对定位左侧） -->
+      <button class="btn btn-ghost btn-square lg:hidden absolute left-2" @click="mobileMenuOpen = !mobileMenuOpen">
+        <Icon :icon="mobileMenuOpen ? 'mdi:close' : 'mdi:menu'" width="24" />
+      </button>
+      <!-- 桌面端菜单按钮占位（对称） -->
+      <div class="hidden lg:flex flex-1 items-center gap-2">
         <Icon icon="mdi:earth" width="28" class="text-primary" />
         <span class="text-lg font-bold">GIS 数据管理</span>
       </div>
-      <div class="flex-none">
-        <button class="btn btn-ghost btn-square lg:hidden" @click="mobileMenuOpen = !mobileMenuOpen">
-          <Icon :icon="mobileMenuOpen ? 'mdi:close' : 'mdi:menu'" width="24" />
-        </button>
+      <!-- 标题（移动端居中） -->
+      <div class="flex lg:hidden items-center gap-2 mx-auto">
+        <Icon icon="mdi:earth" width="24" class="text-primary" />
+        <span class="text-base font-bold">GIS 数据管理</span>
       </div>
+      <!-- 桌面端右侧占位 -->
+      <div class="hidden lg:flex flex-none" />
     </header>
 
     <!-- 下方：侧边栏 + 主内容 -->
